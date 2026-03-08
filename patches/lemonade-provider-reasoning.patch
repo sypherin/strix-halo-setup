@@ -1,0 +1,47 @@
+--- Lemonade SDK v0.0.7 provider.js patches ---
+--- Apply to: ~/.vscode-insiders/extensions/lemonade-sdk.lemonade-sdk-0.0.7/out/provider.js
+--- These patches must be re-applied after any lemonade-sdk extension update.
+
+=== Patch 1: reasoning_content support (line ~392) ===
+Find:
+    const maybeThinking = choice?.thinking ?? deltaObj?.thinking;
+Replace with:
+    const maybeThinking = choice?.thinking ?? deltaObj?.thinking ?? deltaObj?.reasoning_content;
+
+=== Patch 2: ThinkingPart fallback (line ~408-416) ===
+Find:
+                if (text) {
+                    if (ThinkingCtor) {
+                        progress.report(new ThinkingCtor(text, id, metadata));
+                    }
+                    emitted = true;
+                }
+Replace with:
+                if (text) {
+                    if (ThinkingCtor) {
+                        progress.report(new ThinkingCtor(text, id, metadata));
+                    } else {
+                        // Fallback: emit thinking as regular text so Copilot doesn't timeout
+                        progress.report(new vscode.LanguageModelTextPart(text));
+                    }
+                    emitted = true;
+                }
+
+=== Patch 3: Disable thinking mode in request (line ~248) ===
+Find:
+            requestBody = {
+                model: model.id,
+                messages: openaiMessages,
+                stream: true,
+                max_tokens: Math.min(options.modelOptions?.max_tokens || 4096, model.maxOutputTokens),
+                temperature: options.modelOptions?.temperature ?? 0.7,
+            };
+Replace with:
+            requestBody = {
+                model: model.id,
+                messages: openaiMessages,
+                stream: true,
+                max_tokens: Math.min(options.modelOptions?.max_tokens || 4096, model.maxOutputTokens),
+                temperature: options.modelOptions?.temperature ?? 0.7,
+                chat_template_kwargs: { enable_thinking: false },
+            };
