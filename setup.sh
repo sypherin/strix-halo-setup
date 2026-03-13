@@ -157,12 +157,13 @@ mkdir -p "$SYSTEMD_DIR"
 cp "$SCRIPT_DIR/systemd/llama-server.service" "$SYSTEMD_DIR/"
 echo "  Installed llama-server.service"
 
-# ComfyUI (install if toolbox exists)
-if toolbox list 2>/dev/null | grep -q "strix-halo-image-video"; then
+# ComfyUI (install if either toolbox exists)
+if toolbox list 2>/dev/null | grep -q "strix-halo-comfyui\|strix-halo-image-video"; then
     cp "$SCRIPT_DIR/systemd/comfyui.service" "$SYSTEMD_DIR/"
     echo "  Installed comfyui.service"
 else
-    echo "  Skipped comfyui.service (strix-halo-image-video toolbox not found)"
+    echo "  Skipped comfyui.service (no ComfyUI toolbox found)"
+    echo "  Create one with: toolbox create strix-halo-comfyui --image docker.io/kyuz0/amd-strix-halo-comfyui:latest -- --device /dev/dri --device /dev/kfd --group-add video --group-add render --security-opt seccomp=unconfined"
 fi
 
 # Lemonade router (optional — for web UI and image gen)

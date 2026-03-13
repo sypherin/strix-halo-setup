@@ -124,12 +124,21 @@ To switch models, update the `-m` path in `llama-server.service` and restart:
 systemctl --user restart llama-server
 ```
 
-### Image Generation (ComfyUI on port 7860)
-| Model | Size | Speed | Notes |
-|-------|------|-------|-------|
-| Flux-2-Klein-4B | ~15GB | ~10s/image | Best quality (Flux 2) |
-| SDXL-Turbo | ~7GB | Fast | Good quality |
-| SD-Turbo | ~2GB | Fastest | Decent quality |
+### Image/Video Generation (ComfyUI on port 7860)
+
+Toolbox: `kyuz0/amd-strix-halo-comfyui:latest` (ROCm 7 nightlies)
+
+| Workflow | Type | Notes |
+|----------|------|-------|
+| HunyuanVideo 1.5 | I2V / T2V | 4-step LoRA, 720p, configured for 32GB |
+| Qwen Image 2512 | T2I | Use BF16 (not FP8 — FP8 is broken on gfx1151) |
+| Qwen Image Edit | Image Editing | Lightning LoRA, 4/20 steps |
+| Wan 2.2 | I2V / T2V | 14B model with 4-step Lightning LoRA |
+| LTX-2 | Video+Audio | Audio OOMs on 128GB — reduce VRAM reservation |
+
+Flags: `--bf16-vae --disable-mmap --cache-none` (all critical for gfx1151).
+
+FP8 is a **software limitation** on Strix Halo — always use **BF16** models.
 
 ## Why Vulkan?
 

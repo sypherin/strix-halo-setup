@@ -1,17 +1,18 @@
 [Unit]
-Description=ComfyUI Server (Strix Halo Toolbox)
+Description=ComfyUI Server (Strix Halo ComfyUI Toolbox)
 After=default.target
 
 [Service]
 Type=simple
-# Runs ComfyUI inside the kyuz0 strix-halo-image-video toolbox container.
-# The toolbox provides ROCm/Vulkan drivers and Python deps pre-configured.
+# Runs ComfyUI inside the kyuz0 strix-halo-comfyui toolbox container.
+# Image: docker.io/kyuz0/amd-strix-halo-comfyui:latest
 #
-# IMPORTANT flags:
-#   --disable-mmap   Required for Strix Halo per kyuz0 — prevents crashes
-#                    when loading large checkpoint files in the toolbox env.
-#   --listen 0.0.0.0 Allow connections from host (toolbox uses host networking).
-ExecStart=/usr/bin/toolbox run -c strix-halo-image-video bash -c 'cd /opt/ComfyUI && /opt/venv/bin/python main.py --listen 0.0.0.0 --port 7860 --disable-mmap'
+# IMPORTANT flags (from kyuz0 README):
+#   --bf16-vae       Prevents OOM during VAE decode (replaces old --fp32-vae)
+#   --disable-mmap   Critical for gfx1151 — mmap above 64GB is very slow on ROCm
+#   --cache-none     Better unified memory management (GTT vs RAM)
+#   --listen 0.0.0.0 Allow connections from host (toolbox uses host networking)
+ExecStart=/usr/bin/toolbox run -c strix-halo-comfyui bash -c 'cd /opt/ComfyUI && /opt/venv/bin/python main.py --listen 0.0.0.0 --port 7860 --bf16-vae --disable-mmap --cache-none'
 Restart=on-failure
 RestartSec=10
 
