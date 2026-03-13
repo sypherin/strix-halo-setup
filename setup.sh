@@ -1,34 +1,40 @@
 #!/bin/bash
 # Strix Halo Local AI Setup
-# Configures Lemonade Server with Vulkan backend + optimized binaries
-# For AMD Strix Halo APU with Radeon 8060S iGPU (RDNA 3.5)
+# Configures local LLM + image generation for AMD Strix Halo APU (Radeon 8060S, RDNA 3.5)
+#
+# Architecture:
+#   - llama-server (kyuz0 Vulkan) → port 8001 (OpenAI-compatible LLM API)
+#   - Lemonade router             → port 8000 (web UI + sd-cpp image gen, optional)
+#   - ComfyUI (toolbox)           → port 7860 (advanced image/video gen, optional)
 #
 # Prerequisites:
 #   - Fedora with Vulkan drivers (RADV)
 #   - VGM BIOS set to 96GB GPU VRAM
+#   - User lingering enabled: loginctl enable-linger $USER
 #   - Secondary drive mounted at /mnt/Esuna (optional, for model storage)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SYSTEMD_DIR="$HOME/.config/systemd/user"
 
 echo "=== Strix Halo Local AI Setup ==="
 echo ""
 
 # --- Step 1: Install Lemonade Server snap ---
-echo "[1/8] Installing Lemonade Server..."
+echo "[1/9] Installing Lemonade Server..."
 if snap list lemonade-server &>/dev/null; then
     echo "  Already installed: $(snap list lemonade-server | tail -1 | awk '{print $1, $2}')"
 else
     sudo snap install lemonade-server
 fi
 
-# Disable the snap daemon (it defaults to ROCm which is slow on iGPU)
-echo "[2/8] Disabling snap daemon (we start manually with Vulkan)..."
+# Disable the snap daemon (it defaults to ROCm, conflicts with our services)
+echo "[2/9] Disabling snap daemon..."
 sudo snap stop --disable lemonade-server 2>/dev/null || true
 
 # --- Step 2: Install kyuz0 Vulkan LLM binaries ---
-echo "[3/8] Setting up kyuz0 optimized Vulkan LLM binaries..."
+echo "[3/9] Setting up kyuz0 optimized Vulkan LLM binaries..."
 VULKAN_DIR="$HOME/.lemonade/bin/llamacpp/vulkan"
 mkdir -p "$VULKAN_DIR"
 cp "$SCRIPT_DIR/bin/llama-server-wrapper.sh" "$VULKAN_DIR/"
@@ -49,11 +55,44 @@ if [ ! -f "$VULKAN_DIR/llama-server" ]; then
     echo "    cp /usr/local/bin/llama-server $VULKAN_DIR/"
     echo "    cp /usr/local/lib/lib{ggml,llama,mtmd}*.so* $VULKAN_DIR/"
     echo ""
+else
+    echo "  kyuz0 binary already present ($(ls -la "$VULKAN_DIR/llama-server" | awk '{print $5}') bytes)"
+fi
+
+# Replace snap's bundled Vulkan llama-server with kyuz0's (fixes ABI breakage)
+# The snap's libllama.so is built against a different libggml-base.so version,
+# causing "undefined symbol: ggml_build_forward_select" crashes. This persists
+# across snap auto-updates, so we overwrite every time setup.sh runs.
+SNAP_VK_DIR="$HOME/snap/lemonade-server/current/.cache/lemonade/bin/llamacpp/vulkan"
+if [ -d "$SNAP_VK_DIR" ] && [ -f "$VULKAN_DIR/llama-server" ]; then
+    echo "  Replacing snap's Vulkan binaries with kyuz0's..."
+    for f in llama-server; do
+        [ -f "$SNAP_VK_DIR/$f" ] && [ ! -f "$SNAP_VK_DIR/$f.snap.bak" ] && \
+            cp "$SNAP_VK_DIR/$f" "$SNAP_VK_DIR/$f.snap.bak"
+        cp "$VULKAN_DIR/$f" "$SNAP_VK_DIR/$f"
+    done
+    # Copy matching shared libs
+    cp "$VULKAN_DIR/libllama.so.0"       "$SNAP_VK_DIR/libllama.so.0" 2>/dev/null || true
+    cp "$VULKAN_DIR/libggml-base.so.0"   "$SNAP_VK_DIR/libggml-base.so.0" 2>/dev/null || true
+    cp "$VULKAN_DIR/libggml.so.0"        "$SNAP_VK_DIR/libggml.so.0" 2>/dev/null || true
+    cp "$VULKAN_DIR/libggml-vulkan.so.0" "$SNAP_VK_DIR/libggml-vulkan.so" 2>/dev/null || true
+    cp "$VULKAN_DIR/libggml-cpu.so.0"    "$SNAP_VK_DIR/libggml-cpu.so.0" 2>/dev/null || true
+    cp "$VULKAN_DIR/libggml-rpc.so.0"    "$SNAP_VK_DIR/libggml-rpc.so" 2>/dev/null || true
+    cp "$VULKAN_DIR/libmtmd.so.0"        "$SNAP_VK_DIR/libmtmd.so.0" 2>/dev/null || true
+    # Fix symlinks
+    cd "$SNAP_VK_DIR"
+    ln -sf libllama.so.0 libllama.so 2>/dev/null || true
+    ln -sf libggml-base.so.0 libggml-base.so 2>/dev/null || true
+    ln -sf libggml.so.0 libggml.so 2>/dev/null || true
+    ln -sf libmtmd.so.0 libmtmd.so 2>/dev/null || true
+    cd "$SCRIPT_DIR"
+    echo "  Snap Vulkan binaries replaced with kyuz0's (lemonade router will use these)"
+else
+    echo "  Snap Vulkan dir not found (install llamacpp:vulkan recipe first)"
 fi
 
 # --- Step 3: Install Vulkan sd-cpp for image generation ---
-echo "[4/8] Setting up Vulkan sd-cpp for image generation..."
-# Install the ROCm recipe first (we swap the binary for Vulkan)
+echo "[4/9] Setting up Vulkan sd-cpp for image generation..."
 snap run lemonade-server recipes --install sd-cpp:rocm 2>/dev/null || true
 
 SDCPP_DIR="$HOME/snap/lemonade-server/current/.cache/lemonade/bin/sd-cpp/rocm/build/bin"
@@ -63,58 +102,32 @@ cp "$SCRIPT_DIR/bin/sd-server-wrapper.sh" "$VULKAN_SD_DIR/"
 chmod +x "$VULKAN_SD_DIR/sd-server-wrapper.sh"
 
 if [ -d "$SDCPP_DIR" ]; then
-    # Download Vulkan sd-cpp binary if not present
     if [ ! -f "$VULKAN_SD_DIR/sd-server" ]; then
         echo "  Downloading Vulkan sd-cpp binary..."
         SDCPP_URL="https://github.com/leejet/stable-diffusion.cpp/releases/latest/download/sd-master-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"
         curl -L -o /tmp/sd-vulkan.zip "$SDCPP_URL" 2>/dev/null || {
-            # Fallback to known working release
             curl -L -o /tmp/sd-vulkan.zip "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-523-c8fb3d2/sd-master-c8fb3d2-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip"
         }
         unzip -o /tmp/sd-vulkan.zip -d "$VULKAN_SD_DIR/"
         rm -f /tmp/sd-vulkan.zip
-        echo "  Vulkan sd-cpp binary downloaded"
     fi
 
-    # Swap ROCm binary with Vulkan (ROCm can't detect Strix Halo iGPU)
     if [ -f "$VULKAN_SD_DIR/sd-server" ]; then
-        # Backup ROCm originals
         [ -f "$SDCPP_DIR/sd-server" ] && [ ! -f "$SDCPP_DIR/sd-server.rocm.bak" ] && \
             cp "$SDCPP_DIR/sd-server" "$SDCPP_DIR/sd-server.rocm.bak"
         [ -f "$SDCPP_DIR/libstable-diffusion.so" ] && [ ! -f "$SDCPP_DIR/libstable-diffusion.so.rocm.bak" ] && \
             cp "$SDCPP_DIR/libstable-diffusion.so" "$SDCPP_DIR/libstable-diffusion.so.rocm.bak"
-
-        # Copy Vulkan binaries in place
         cp "$VULKAN_SD_DIR/sd-server" "$SDCPP_DIR/sd-server"
         cp "$VULKAN_SD_DIR/libstable-diffusion.so" "$SDCPP_DIR/libstable-diffusion.so"
-        echo "  Swapped ROCm sd-server with Vulkan (GPU-accelerated image gen)"
+        echo "  Swapped ROCm sd-server with Vulkan"
     fi
 else
     echo "  sd-cpp not yet installed. Run: snap run lemonade-server recipes --install sd-cpp:rocm"
 fi
 
-# --- Step 4: Set environment variables ---
-echo "[5/8] Configuring environment variables..."
-if grep -q 'LEMONADE_LLAMACPP' ~/.bashrc; then
-    echo "  Already configured in ~/.bashrc"
-else
-    cat >> ~/.bashrc << 'BASHRC'
-
-# Lemonade - use kyuz0 Vulkan backend
-export LEMONADE_LLAMACPP=vulkan
-export LEMONADE_LLAMACPP_VULKAN_BIN="$HOME/.lemonade/bin/llamacpp/vulkan/llama-server-wrapper.sh"
-BASHRC
-    echo "  Added to ~/.bashrc"
-fi
-
-# Export for current session
-export LEMONADE_LLAMACPP=vulkan
-export LEMONADE_LLAMACPP_VULKAN_BIN="$HOME/.lemonade/bin/llamacpp/vulkan/llama-server-wrapper.sh"
-
-# --- Step 5: Model storage on secondary drive ---
-echo "[6/8] Setting up model storage..."
+# --- Step 4: Model storage on secondary drive ---
+echo "[5/9] Setting up model storage..."
 if [ -d /mnt/Esuna ]; then
-    # Lemonade cache
     SNAP_CACHE="$HOME/snap/lemonade-server/current/.cache/huggingface/hub"
     ESUNA_HF="/mnt/Esuna/lemonade-cache/huggingface/hub"
     if [ -L "$SNAP_CACHE" ]; then
@@ -123,32 +136,68 @@ if [ -d /mnt/Esuna ]; then
         mkdir -p "$(dirname "$SNAP_CACHE")"
         rm -rf "$SNAP_CACHE"
         ln -s "$ESUNA_HF" "$SNAP_CACHE"
-        echo "  Symlinked lemonade cache → Esuna"
+        echo "  Symlinked lemonade cache -> Esuna"
     fi
-
-    # ~/models
-    if [ -L "$HOME/models" ]; then
-        echo "  ~/models already symlinked to Esuna"
-    elif [ -d /mnt/Esuna/models ]; then
-        echo "  NOTE: Move ~/models to /mnt/Esuna/models manually if needed"
-    fi
+    sudo snap connect lemonade-server:removable-media 2>/dev/null || true
 else
     echo "  /mnt/Esuna not found, using default storage"
 fi
 
-# Grant snap access to removable media
-sudo snap connect lemonade-server:removable-media 2>/dev/null || true
+# --- Step 5: Install systemd services ---
+echo "[6/9] Installing systemd services..."
+mkdir -p "$SYSTEMD_DIR"
 
-# --- Step 6: Install VS Code extensions ---
-echo "[7/8] VS Code extensions..."
+# llama-server (primary LLM service — always install)
+cp "$SCRIPT_DIR/systemd/llama-server.service" "$SYSTEMD_DIR/"
+echo "  Installed llama-server.service"
+
+# ComfyUI (install if toolbox exists)
+if toolbox list 2>/dev/null | grep -q "strix-halo-image-video"; then
+    cp "$SCRIPT_DIR/systemd/comfyui.service" "$SYSTEMD_DIR/"
+    echo "  Installed comfyui.service"
+else
+    echo "  Skipped comfyui.service (strix-halo-image-video toolbox not found)"
+fi
+
+# Lemonade router (optional — for web UI and image gen)
+cp "$SCRIPT_DIR/systemd/lemonade.service" "$SYSTEMD_DIR/"
+echo "  Installed lemonade.service (disabled by default)"
+
+# Enable user lingering so services start at boot without login
+loginctl enable-linger "$USER" 2>/dev/null || true
+
+# Reload and enable services
+systemctl --user daemon-reload
+systemctl --user enable llama-server.service
+echo "  Enabled llama-server.service (auto-start on boot)"
+
+if [ -f "$SYSTEMD_DIR/comfyui.service" ]; then
+    systemctl --user enable comfyui.service
+    echo "  Enabled comfyui.service (auto-start on boot)"
+fi
+
+# Lemonade is NOT enabled by default due to snap daemon conflict
+echo "  lemonade.service NOT enabled (run: sudo snap stop --disable lemonade-server && systemctl --user enable --now lemonade.service)"
+
+# --- Step 6: Set environment variables ---
+echo "[7/9] Configuring environment variables..."
+if grep -q 'LEMONADE_LLAMACPP' ~/.bashrc; then
+    echo "  Already configured in ~/.bashrc"
+else
+    cat >> ~/.bashrc << 'BASHRC'
+
+# Lemonade - use kyuz0 Vulkan backend
+export LEMONADE_LLAMACPP=vulkan
+BASHRC
+    echo "  Added to ~/.bashrc"
+fi
+
+# --- Step 7: Install VS Code extensions ---
+echo "[8/9] VS Code extensions..."
 if command -v code-insiders &>/dev/null; then
-    # Install Continue
     code-insiders --install-extension Continue.continue 2>/dev/null && echo "  Installed: Continue" || echo "  Continue: already installed or unavailable"
-
-    # Install Lemonade SDK
     code-insiders --install-extension lemonade-sdk.lemonade-sdk 2>/dev/null && echo "  Installed: Lemonade SDK" || echo "  Lemonade SDK: already installed or unavailable"
 
-    # Copy Continue config
     mkdir -p "$HOME/.continue"
     if [ ! -f "$HOME/.continue/config.yaml" ]; then
         cp "$SCRIPT_DIR/vscode/continue-config.yaml" "$HOME/.continue/config.yaml"
@@ -157,30 +206,27 @@ if command -v code-insiders &>/dev/null; then
         echo "  Continue config already exists (not overwriting)"
     fi
 else
-    echo "  VS Code Insiders not found, skipping extension install"
+    echo "  VS Code Insiders not found, skipping"
 fi
 
-# --- Step 7: Apply Lemonade extension patches ---
-echo "[8/8] Applying Lemonade extension patches..."
+# --- Step 8: Apply Lemonade extension patches ---
+echo "[9/9] Applying Lemonade extension patches..."
 bash "$SCRIPT_DIR/patches/apply-lemonade-patches.sh" 2>/dev/null || echo "  Patches skipped (extension not found)"
 
 echo ""
 echo "=== Setup Complete ==="
 echo ""
-echo "To start the server:"
-echo "  snap run lemonade-server serve --ctx-size 131072 --max-loaded-models 2"
+echo "Services (auto-start on boot):"
+echo "  llama-server  → http://localhost:8001/v1  (Qwen3.5-122B, OpenAI API)"
+echo "  comfyui       → http://localhost:7860      (image/video generation)"
 echo ""
-echo "The router runs on port 8000, llama-server on port 8001, sd-server on port 8002."
-echo "Open http://localhost:8000 for the Lemonade web UI (chat + image gen)."
-echo "In VS Code Copilot Chat, select 'Lemonade' as the model provider."
-echo "Set Lemonade Provider URL to: http://localhost:8000/api/v1"
+echo "Optional (requires: sudo snap stop --disable lemonade-server):"
+echo "  lemonade      → http://localhost:8000      (web UI + sd-cpp image gen)"
 echo ""
-echo "Available models (download via Lemonade UI or CLI):"
-echo "  LLM:"
-echo "    - Qwen3-30B-A3B      (fast MoE, 3B active, ~57 tok/s)"
-echo "    - Qwen3.5-122B-A10B  (SOTA MoE, 10B active, ~8 tok/s)"
-echo "    - Qwen3-VL-8B        (vision model)"
-echo "  Image Gen:"
-echo "    - Flux-2-Klein-4B    (Flux 2, ~10s per 512x512 image)"
-echo "    - SDXL-Turbo          (fast, good quality)"
-echo "    - SD-Turbo            (fastest, decent quality)"
+echo "Start services now:"
+echo "  systemctl --user start llama-server comfyui"
+echo ""
+echo "Check status:"
+echo "  systemctl --user status llama-server comfyui"
+echo "  curl http://localhost:8001/health"
+echo ""

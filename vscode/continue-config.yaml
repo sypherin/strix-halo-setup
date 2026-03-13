@@ -5,7 +5,7 @@ models:
   - name: Qwen3.5-122B-A10B (SOTA)
     provider: openai
     model: Qwen3.5-122B-A10B-GGUF
-    apiBase: http://127.0.0.1:8000/api/v1
+    apiBase: http://127.0.0.1:8001/v1
     apiKey: none
     roles:
       - chat
@@ -14,16 +14,7 @@ models:
   - name: Qwen3-VL-8B (Vision)
     provider: openai
     model: Qwen3-VL-8B-Instruct-GGUF
-    apiBase: http://127.0.0.1:8000/api/v1
-    apiKey: none
-    roles:
-      - chat
-      - edit
-
-  - name: Qwen3-Coder-Next
-    provider: openai
-    model: qwen3-coder-next
-    apiBase: http://127.0.0.1:8080/v1
+    apiBase: http://127.0.0.1:8001/v1
     apiKey: none
     roles:
       - chat

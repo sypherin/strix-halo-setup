@@ -1,0 +1,28 @@
+[Unit]
+Description=Lemonade Router (Vulkan - Strix Halo)
+After=default.target
+
+[Service]
+Type=simple
+# Lemonade router for web UI + image generation (sd-cpp).
+#
+# NOTE: As of v9.4.1 (snap rev 104), the lemonade router has two bugs:
+#   1. The bundled Vulkan llama-server has ABI breakage (missing symbols).
+#   2. The router has a ~15s startup timeout for llama-server — too short for
+#      large models (72GB Qwen3.5-122B takes ~90s to load from secondary drive).
+#
+# Because of this, LLM inference runs as a separate llama-server.service
+# (see llama-server.service). This service is OPTIONAL — only needed for the
+# Lemonade web UI and sd-cpp image generation.
+#
+# Before starting, disable the snap's built-in daemon (it conflicts on port 8000):
+#   sudo snap stop --disable lemonade-server
+Environment=LEMONADE_LLAMACPP=vulkan
+ExecStart=/var/lib/snapd/snap/bin/lemonade-server serve --ctx-size 131072 --llamacpp vulkan --max-loaded-models 2
+StandardOutput=append:/tmp/lemonade.log
+StandardError=append:/tmp/lemonade.log
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
