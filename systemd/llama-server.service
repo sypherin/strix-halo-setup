@@ -1,23 +1,24 @@
 [Unit]
-Description=llama-server (Vulkan - Strix Halo - kyuz0)
+Description=llama-server (Vulkan - Strix Halo)
 After=default.target
 
 [Service]
 Type=simple
-# kyuz0's Vulkan llama-server binary with LD_LIBRARY_PATH wrapper.
-# The snap's bundled llama-server has recurring ABI breakage (missing symbols
-# like ggml_build_forward_select after snap auto-updates), so we run kyuz0's
-# self-contained build directly — no dependency on the snap at runtime.
+# Standalone llama-server using official llama.cpp Vulkan build (b8299+).
+# Bypasses lemonade router entirely — no snap dependency at runtime.
+#
+# Binary location: ~/.lemonade/bin/llamacpp/vulkan/
+# The wrapper script sets LD_LIBRARY_PATH so shared libs are found.
 #
 # IMPORTANT flags:
-#   --mmap        Required. --no-mmap loads the entire model into system RAM
-#                 (72GB for 122B) which OOMs the 30GB system memory and causes
-#                 massive swap thrashing. With mmap, the Vulkan driver maps
-#                 model weights directly into the 96GB unified VRAM.
-#   --no-warmup   Skip the warmup inference pass to reduce startup time.
-#   -ngl 99       Offload all layers to GPU (Vulkan).
-#   --jinja       Enable Jinja2 chat templates (required for Qwen3.5).
+#   --mmap           REQUIRED. Without it, the 72GB model is loaded into system
+#                    RAM (only 30GB), causing swap thrashing and system freeze.
+#                    With mmap, Vulkan maps weights into 96GB unified VRAM.
+#   --no-warmup      Skip warmup inference pass to reduce startup time.
+#   -ngl 99          Offload all layers to GPU (Vulkan).
+#   --jinja          Enable Jinja2 chat templates (required for Qwen3.5).
 #   --reasoning-format auto   Stream reasoning_content for thinking models.
+#   --ubatch-size 512   Prevents MoE prefill regression on Vulkan (b7684+).
 #
 # Model path: update the snapshot hash if you re-download the model.
 ExecStart=/home/awpapa/.lemonade/bin/llamacpp/vulkan/llama-server-wrapper.sh \
@@ -29,7 +30,8 @@ ExecStart=/home/awpapa/.lemonade/bin/llamacpp/vulkan/llama-server-wrapper.sh \
   -ngl 99 \
   --mmap \
   --jinja \
-  --reasoning-format auto
+  --reasoning-format auto \
+  --ubatch-size 512
 Restart=on-failure
 RestartSec=10
 

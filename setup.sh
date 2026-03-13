@@ -33,33 +33,39 @@ fi
 echo "[2/9] Disabling snap daemon..."
 sudo snap stop --disable lemonade-server 2>/dev/null || true
 
-# --- Step 2: Install kyuz0 Vulkan LLM binaries ---
-echo "[3/9] Setting up kyuz0 optimized Vulkan LLM binaries..."
+# --- Step 2: Install Vulkan llama-server binary ---
+echo "[3/9] Setting up Vulkan llama-server..."
 VULKAN_DIR="$HOME/.lemonade/bin/llamacpp/vulkan"
+LLAMA_BUILD="b8299"  # Update this when upgrading
 mkdir -p "$VULKAN_DIR"
 cp "$SCRIPT_DIR/bin/llama-server-wrapper.sh" "$VULKAN_DIR/"
 chmod +x "$VULKAN_DIR/llama-server-wrapper.sh"
 
 if [ ! -f "$VULKAN_DIR/llama-server" ]; then
-    echo ""
-    echo "  NOTE: You need to copy kyuz0's Vulkan llama-server binary and libs to:"
-    echo "    $VULKAN_DIR/"
-    echo ""
-    echo "  Required files:"
-    echo "    llama-server, libggml-base.so.0, libggml-cpu.so.0, libggml-vulkan.so.0,"
-    echo "    libggml.so.0, libllama.so.0, libggml-rpc.so.0, libmtmd.so.0"
-    echo ""
-    echo "  Get them from: https://github.com/kyuz0/amd-strix-halo-toolboxes"
-    echo "  Or extract from the toolbox container:"
-    echo "    toolbox enter strix-halo-vulkan"
-    echo "    cp /usr/local/bin/llama-server $VULKAN_DIR/"
-    echo "    cp /usr/local/lib/lib{ggml,llama,mtmd}*.so* $VULKAN_DIR/"
-    echo ""
+    echo "  Downloading official llama.cpp $LLAMA_BUILD Vulkan build..."
+    LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_BUILD}/llama-${LLAMA_BUILD}-bin-ubuntu-vulkan-x64.tar.gz"
+    curl -L -o /tmp/llama-vulkan.tar.gz "$LLAMA_URL" 2>/dev/null
+    mkdir -p /tmp/llama-vulkan-extract
+    tar xzf /tmp/llama-vulkan.tar.gz -C /tmp/llama-vulkan-extract
+    LLAMA_SRC=$(find /tmp/llama-vulkan-extract -name "llama-server" -type f -printf '%h\n' | head -1)
+    if [ -n "$LLAMA_SRC" ]; then
+        cp "$LLAMA_SRC/llama-server" "$VULKAN_DIR/"
+        cp "$LLAMA_SRC"/libggml-base.so.0 "$LLAMA_SRC"/libggml.so.0 "$VULKAN_DIR/"
+        cp "$LLAMA_SRC"/libllama.so.0 "$LLAMA_SRC"/libmtmd.so.0 "$VULKAN_DIR/"
+        cp "$LLAMA_SRC"/libggml-vulkan.so "$LLAMA_SRC"/libggml-rpc.so "$VULKAN_DIR/"
+        cp "$LLAMA_SRC"/libggml-cpu-*.so "$VULKAN_DIR/"
+        chmod +x "$VULKAN_DIR/llama-server"
+        echo "  Installed llama.cpp $LLAMA_BUILD Vulkan"
+    else
+        echo "  ERROR: Failed to extract llama-server from archive"
+    fi
+    rm -rf /tmp/llama-vulkan.tar.gz /tmp/llama-vulkan-extract
 else
-    echo "  kyuz0 binary already present ($(ls -la "$VULKAN_DIR/llama-server" | awk '{print $5}') bytes)"
+    echo "  llama-server already present ($(ls -la "$VULKAN_DIR/llama-server" | awk '{print $5}') bytes)"
+    echo "  To upgrade, delete $VULKAN_DIR/llama-server and re-run setup.sh"
 fi
 
-# Replace snap's bundled Vulkan llama-server with kyuz0's (fixes ABI breakage)
+# Replace snap's bundled Vulkan llama-server with our working build (fixes ABI breakage)
 # The snap's libllama.so is built against a different libggml-base.so version,
 # causing "undefined symbol: ggml_build_forward_select" crashes. This persists
 # across snap auto-updates, so we overwrite every time setup.sh runs.

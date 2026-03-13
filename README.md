@@ -6,8 +6,8 @@ Local LLM/VLM + image generation for AMD Strix Halo APU (Radeon 8060S iGPU, RDNA
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  llama-server (kyuz0 Vulkan)          port 8001              │
-│  └─ Qwen3.5-122B-A10B (~19 tok/s)    OpenAI-compatible API  │
+│  llama-server (Vulkan, b8299)         port 8001              │
+│  └─ Qwen3.5-122B-A10B (~20 tok/s)    OpenAI-compatible API  │
 │                                                              │
 │  ComfyUI (toolbox)                    port 7860              │
 │  └─ Image/video generation            Vulkan backend         │
@@ -33,7 +33,7 @@ systemctl --user start llama-server comfyui
 
 | Service | Port | Startup | Description |
 |---------|------|---------|-------------|
-| `llama-server` | 8001 | auto | LLM inference (kyuz0 Vulkan binary) |
+| `llama-server` | 8001 | auto | LLM inference (llama.cpp b8299, Vulkan) |
 | `comfyui` | 7860 | auto | Image/video gen (toolbox container) |
 | `lemonade` | 8000 | manual | Web UI + sd-cpp (optional, see below) |
 
@@ -61,7 +61,7 @@ The Lemonade snap has two bugs as of v9.4.1 (snap rev 104):
 1. **ABI breakage**: The bundled Vulkan `libllama.so` references `ggml_build_forward_select` which doesn't exist in the bundled `libggml-base.so`. This causes `exit code 127` (symbol lookup error). Snap auto-updates keep breaking this.
 2. **Startup timeout**: The router has a ~15s timeout for llama-server startup. Loading a 72GB model from a secondary drive takes ~90s. The router kills llama-server before it finishes loading.
 
-The fix: run [kyuz0's Vulkan llama-server](https://github.com/kyuz0/amd-strix-halo-toolboxes) as a standalone systemd service with its own matching libs. Same OpenAI-compatible API, no snap dependency at runtime.
+The fix: run the [official llama.cpp Vulkan build](https://github.com/ggml-org/llama.cpp/releases) as a standalone systemd service. The official release includes pre-built Vulkan Linux binaries that work on Strix Halo out of the box (no custom patches needed — kyuz0's Vulkan builds are essentially stock llama.cpp). Same OpenAI-compatible API, no snap dependency at runtime.
 
 ## Critical configuration notes
 
@@ -115,7 +115,7 @@ When the lemonade-server snap updates, it overwrites the Vulkan directory at `~/
 ### LLM (llama-server on port 8001)
 | Model | Type | Active Params | Speed | Use case |
 |-------|------|---------------|-------|----------|
-| Qwen3.5-122B-A10B | MoE | 10B | ~19 tok/s gen, ~45 tok/s prompt | Default, SOTA quality |
+| Qwen3.5-122B-A10B | MoE | 10B | ~20 tok/s gen, ~63 tok/s prompt | Default, SOTA quality |
 | Qwen3-30B-A3B | MoE | 3B | ~57 tok/s | Fast chat, coding |
 | Qwen3-VL-8B | Dense | 8B | ~20 tok/s | Vision/multimodal |
 
@@ -141,6 +141,44 @@ ROCm doesn't detect Strix Halo's iGPU (GFX1151/RDNA 3.5), causing both LLM and i
 | Image gen | ~14 it/s (CPU) | **~198 it/s (VRAM)** |
 | Image load | 57s | **4s** |
 
+## Upgrading llama-server
+
+The llama-server binary at `~/.lemonade/bin/llamacpp/vulkan/` can be upgraded independently from lemonade. Official releases include pre-built Vulkan binaries.
+
+```bash
+# Download latest release (replace b8299 with current version)
+cd /tmp
+wget https://github.com/ggml-org/llama.cpp/releases/download/b8299/llama-b8299-bin-ubuntu-vulkan-x64.tar.gz
+tar xzf llama-b8299-bin-ubuntu-vulkan-x64.tar.gz
+
+# Stop service, replace binaries, restart
+systemctl --user stop llama-server
+VULKAN_DIR="$HOME/.lemonade/bin/llamacpp/vulkan"
+SRC="/tmp/llama-b8299/llama-b8299"  # adjust path for extracted dir
+
+# Backup old build
+mkdir -p "$VULKAN_DIR/backup-$(date +%Y%m%d)"
+cp "$VULKAN_DIR/llama-server" "$VULKAN_DIR"/lib*.so* "$VULKAN_DIR/backup-$(date +%Y%m%d)/"
+
+# Copy new binaries (must include all .so files — b8299+ dynamically loads backends)
+cp "$SRC/llama-server" "$VULKAN_DIR/"
+cp "$SRC"/libggml-base.so.0 "$SRC"/libggml.so.0 "$SRC"/libllama.so.0 "$SRC"/libmtmd.so.0 "$VULKAN_DIR/"
+cp "$SRC"/libggml-vulkan.so "$SRC"/libggml-rpc.so "$VULKAN_DIR/"
+cp "$SRC"/libggml-cpu-*.so "$VULKAN_DIR/"
+chmod +x "$VULKAN_DIR/llama-server"
+
+systemctl --user start llama-server
+curl http://localhost:8001/health  # wait for model to load (~35s)
+```
+
+### Build history
+| Build | Date | Prompt tok/s | Gen tok/s | Notes |
+|-------|------|-------------|-----------|-------|
+| b8119 | 2026-02 | ~45 | ~19 | kyuz0 custom build (initial) |
+| b8299 | 2026-03-13 | **~63** | **~20** | Official release, +40% prompt speed |
+
+Key improvements in b8299: Vulkan Flash Attention refactor, AMD partial offloading perf fix, multiple data race fixes.
+
 ## Troubleshooting
 
 ### System is laggy when model is loaded
@@ -156,9 +194,10 @@ Check logs:
 journalctl --user -u llama-server --no-pager -n 50
 ```
 Common causes:
-- Model path changed (snapshot hash) — update `-m` in service file
-- kyuz0 binary missing — run `setup.sh` or copy binaries manually
-- Esuna not mounted — check `mount | grep Esuna`
+- **"no usable GPU found"** — Vulkan backend libs not found. Ensure `libggml-vulkan.so` (not just `.so.0`) exists in `~/.lemonade/bin/llamacpp/vulkan/`. b8299+ dynamically loads backends by filename without version suffix.
+- **Model path changed** (snapshot hash) — update `-m` in service file
+- **Binary missing** — download from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases)
+- **Esuna not mounted** — check `mount | grep Esuna`
 
 ### Lemonade shows "llama-server failed to start"
 This is expected if using the lemonade router for LLM. Use the standalone llama-server on port 8001 instead. Lemonade is only needed for the web UI and sd-cpp image gen.
