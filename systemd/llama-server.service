@@ -1,10 +1,10 @@
 [Unit]
-Description=llama-server (Vulkan - Strix Halo)
+Description=llama-server (Vulkan - Strix Halo - kyuz0)
 After=default.target
 
 [Service]
 Type=simple
-# Standalone llama-server using official llama.cpp Vulkan build (b8299+).
+# Standalone llama-server using kyuz0 Vulkan RADV build (b8461).
 # Bypasses lemonade router entirely — no snap dependency at runtime.
 #
 # Binary location: ~/.lemonade/bin/llamacpp/vulkan/
@@ -12,7 +12,7 @@ Type=simple
 #
 # IMPORTANT flags:
 #   --mmap           REQUIRED. Without it, the 72GB model is loaded into system
-#                    RAM (only 30GB), causing swap thrashing and system freeze.
+#                    RAM (only 31GB), causing swap thrashing and system freeze.
 #                    With mmap, Vulkan maps weights into 96GB unified VRAM.
 #   --no-warmup      Skip warmup inference pass to reduce startup time.
 #   -ngl 99          Offload all layers to GPU (Vulkan).

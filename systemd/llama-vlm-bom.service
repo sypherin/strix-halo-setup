@@ -1,0 +1,22 @@
+[Unit]
+Description=llama-server VLM for BOM Extractor (ROCm - Qwen3-VL-32B)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/toolbox run -c llama-rocm-7.2 \
+  llama-server \
+    -m /home/awpapa/models/qwen-vlm/Qwen3VL-32B-Instruct-Q4_K_M.gguf \
+    --mmproj /home/awpapa/models/qwen-vlm/mmproj-Qwen3VL-32B-Instruct-F16.gguf \
+    -ngl 99 \
+    --no-mmap \
+    --flash-attn on \
+    -c 8192 \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --temp 0.1
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
