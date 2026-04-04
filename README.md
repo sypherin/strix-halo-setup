@@ -7,7 +7,7 @@ Local LLM/VLM + image/video generation + NPU inference for AMD Strix Halo APU (R
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  GPU (Vulkan RADV — 96GB unified VRAM)                          │
-│  ├─ llama-server (turboquant build)     port 8001               │
+│  ├─ llama-server (Vulkan, llama.cpp)     port 8001               │
 │  │  └─ Qwen3.5-122B-A10B (~22 t/s gen, ~393 t/s prompt)        │
 │  ├─ ComfyUI (ROCm toolbox)             port 7860               │
 │  │  └─ Image/video gen (Wan 2.2, HunyuanVideo, Qwen Image)     │
@@ -40,7 +40,7 @@ All GPU services run as **systemd user services** with auto-start on boot.
 |-----------|---------|-------|
 | Kernel | 7.0.0-rc6 (vanilla) | COPR `@kernel-vanilla/mainline-wo-mergew` |
 | Mesa | 25.3.6 | Vulkan RADV driver |
-| llama.cpp | turboquant build (8793) | Custom Vulkan build from `~/llama-cpp-turboquant` |
+| llama.cpp | 8793 (Vulkan build) | Built from `~/llama-cpp-turboquant` fork (turbo KV cache is CPU-only, not used on Vulkan) |
 | ROCm | 7.2 (kyuz0 toolbox) | For VLM + ComfyUI containers |
 | XRT | 2.23.0 | NPU runtime, built from `~/xdna-driver` |
 | amdxdna | 2.23.0 (DKMS) | NPU kernel module |
@@ -62,7 +62,7 @@ For NPU setup, see [NPU Setup](#npu-setup) below.
 
 ### LLM inference (Qwen3.5-122B-A10B UD-Q4_K_XL)
 
-Tested on kernel 7.0-rc6, Mesa 25.3.6, Vulkan RADV, turboquant build 8793.
+Tested on kernel 7.0-rc6, Mesa 25.3.6, Vulkan RADV, llama.cpp build 8793.
 
 | Metric | Value | Notes |
 |--------|-------|-------|
@@ -93,7 +93,7 @@ Kernel 7.0 significantly improves prompt processing via RADV/Vulkan improvements
 
 | Service | Port | Backend | Startup | Description |
 |---------|------|---------|---------|-------------|
-| `llama-server` | 8001 | Vulkan | auto | LLM inference (turboquant build 8793) |
+| `llama-server` | 8001 | Vulkan | auto | LLM inference (llama.cpp 8793, Vulkan RADV) |
 | `comfyui` | 7860 | ROCm | auto | Image/video gen (kyuz0 toolbox container) |
 | `llama-vlm-bom` | 8080 | ROCm | auto | Vision LLM (Qwen3-VL-32B, kyuz0 ROCm 7.2 toolbox) |
 | `fastflowlm` | 52625 | NPU | auto | Small model inference (Qwen3.5:4b, Whisper) |
@@ -239,7 +239,7 @@ FP8 is a **software limitation** on Strix Halo (RDNA 3.5). Always use BF16 model
 
 ## Why Vulkan for LLM? Why ROCm for image gen?
 
-**LLM inference**: ROCm doesn't reliably detect gfx1151 for all workloads. Vulkan via RADV works perfectly and uses the full 96GB unified VRAM. The custom turboquant build gives the best LLM performance.
+**LLM inference**: ROCm doesn't reliably detect gfx1151 for all workloads. Vulkan via RADV works perfectly and uses the full 96GB unified VRAM.
 
 **Image/video generation**: ComfyUI and PyTorch-based pipelines require ROCm. The kyuz0 toolbox containers include patched ROCm (TheRock nightlies) that work on gfx1151 with `HSA_OVERRIDE_GFX_VERSION=11.5.1`.
 
@@ -280,9 +280,9 @@ Toolbox: `kyuz0/amd-strix-halo-comfyui:latest` (ROCm TheRock nightlies)
 | Qwen Image Edit | Image Editing | Lightning LoRA |
 | Wan 2.2 | I2V / T2V | 14B model with 4-step Lightning LoRA |
 
-## Building llama.cpp (turboquant Vulkan)
+## Building llama.cpp (Vulkan)
 
-The current LLM server uses a custom turboquant build for better MoE quantization:
+Build from source for latest Vulkan backend improvements. We use the turboquant fork (`~/llama-cpp-turboquant`) but the turbo KV cache types are CPU-only — on Vulkan we use q8_0 KV cache instead:
 
 ```bash
 cd ~/llama-cpp-turboquant
@@ -301,7 +301,7 @@ curl http://localhost:8001/health  # wait for model to load (~35s)
 ```
 ├── setup.sh                              # Main setup script
 ├── systemd/
-│   ├── llama-server.service              # LLM server (Vulkan turboquant, auto-enabled)
+│   ├── llama-server.service              # LLM server (Vulkan RADV, auto-enabled)
 │   ├── llama-vlm-bom.service             # Vision LLM server (ROCm toolbox, auto-enabled)
 │   ├── comfyui.service                   # ComfyUI (ROCm toolbox, auto-enabled)
 │   └── lemonade.service                  # Lemonade router (optional, disabled by default)
@@ -319,7 +319,7 @@ curl http://localhost:8001/health  # wait for model to load (~35s)
 
 | Component | Version | Date | Notes |
 |-----------|---------|------|-------|
-| llama.cpp | turboquant 8793 (custom Vulkan) | 2026-04-03 | 393 t/s pp, 22 t/s tg |
+| llama.cpp | 8793 (Vulkan build from turboquant fork) | 2026-04-03 | 393 t/s pp, 22 t/s tg |
 | llama-server | b8461 (kyuz0 Vulkan RADV) | 2026-03 | 351 t/s pp, 19 t/s tg (replaced) |
 | llama-server | b8299 (official release) | 2026-03-13 | +40% prompt speed over b8119 |
 | llama-server | b8119 (kyuz0 custom) | 2026-02 | Initial build |

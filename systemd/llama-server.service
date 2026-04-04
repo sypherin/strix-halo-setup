@@ -4,8 +4,8 @@ After=default.target
 
 [Service]
 Type=simple
-# Custom turboquant Vulkan build of llama.cpp from ~/llama-cpp-turboquant.
-# Built from source with Vulkan backend — no kyuz0 container dependency.
+# llama.cpp Vulkan build from ~/llama-cpp-turboquant (turboquant fork).
+# Turbo KV cache types are CPU-only; on Vulkan we use q8_0 KV cache.
 #
 # IMPORTANT flags:
 #   --mmap           REQUIRED for Vulkan. Maps weights into 96GB unified VRAM.
