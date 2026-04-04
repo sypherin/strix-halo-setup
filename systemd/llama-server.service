@@ -1,29 +1,29 @@
 [Unit]
-Description=llama-server (Vulkan - Strix Halo - kyuz0)
+Description=llama-server (Vulkan - Strix Halo - Qwen3.5-122B-A10B)
 After=default.target
 
 [Service]
 Type=simple
-# Standalone llama-server using kyuz0 Vulkan RADV build (b8461).
-# Bypasses lemonade router entirely — no snap dependency at runtime.
-#
-# Binary location: ~/.lemonade/bin/llamacpp/vulkan/
-# The wrapper script sets LD_LIBRARY_PATH so shared libs are found.
+# Custom turboquant Vulkan build of llama.cpp from ~/llama-cpp-turboquant.
+# Built from source with Vulkan backend — no kyuz0 container dependency.
 #
 # IMPORTANT flags:
-#   --mmap           REQUIRED. Without it, the 72GB model is loaded into system
-#                    RAM (only 31GB), causing swap thrashing and system freeze.
-#                    With mmap, Vulkan maps weights into 96GB unified VRAM.
-#   --no-warmup      Skip warmup inference pass to reduce startup time.
-#   -ngl 99          Offload all layers to GPU (Vulkan).
-#   --jinja          Enable Jinja2 chat templates (required for Qwen3.5).
-#   --reasoning-format auto   Stream reasoning_content for thinking models.
-#   --ubatch-size 512   Prevents MoE prefill regression on Vulkan (b7684+).
+#   --mmap           REQUIRED for Vulkan. Maps weights into 96GB unified VRAM.
+#                    Without it, the 72GB model loads into 31GB system RAM → swap death.
+#   -fa 1            Flash attention — required for good performance on Strix Halo.
+#   -ctk q8_0        KV cache type for keys (turbo2 not supported on Vulkan).
+#   -ctv q8_0        KV cache type for values.
+#   --ubatch-size 1024  Sweet spot for MoE prefill on Vulkan (tested 512/1024/2048).
+#   --cache-prompt   Cache prompt tokens for faster re-processing.
+#   --reasoning-budget 500  Cap thinking tokens to avoid runaway reasoning.
 #
-# Model path: update the snapshot hash if you re-download the model.
-ExecStart=/home/awpapa/.lemonade/bin/llamacpp/vulkan/llama-server-wrapper.sh \
-  -m /mnt/Esuna/lemonade-cache/huggingface/hub/models--unsloth--Qwen3.5-122B-A10B-GGUF/snapshots/51eab4d59d53f573fb9206cb3ce613f1d0aa392b/UD-Q4_K_XL/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf \
-  --ctx-size 131072 \
+# Performance (kernel 7.0-rc6, Mesa 25.3.6, RADV):
+#   pp: ~393 t/s (2K tokens)
+#   tg: ~22 t/s
+#   TTFT: ~430ms
+ExecStart=/home/awpapa/llama-cpp-turboquant/build/bin/llama-server \
+  -m /mnt/Esuna/models/unsloth-qwen3.5-122b-a10b/UD-Q4_K_XL/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf \
+  --ctx-size 65536 \
   --port 8001 \
   --host 0.0.0.0 \
   --no-warmup \
@@ -31,7 +31,13 @@ ExecStart=/home/awpapa/.lemonade/bin/llamacpp/vulkan/llama-server-wrapper.sh \
   --mmap \
   --jinja \
   --reasoning-format auto \
-  --ubatch-size 512
+  --ubatch-size 1024 \
+  -fa 1 \
+  -ctk q8_0 \
+  -ctv q8_0 \
+  --cache-prompt \
+  --reasoning-budget 500 \
+  --reasoning-budget-message "Thinking budget reached. Stop thinking and answer directly."
 Restart=on-failure
 RestartSec=10
 

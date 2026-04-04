@@ -7,15 +7,15 @@ Local LLM/VLM + image/video generation + NPU inference for AMD Strix Halo APU (R
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  GPU (Vulkan RADV — 96GB unified VRAM)                          │
-│  ├─ llama-server (b8461)              port 8001                 │
-│  │  └─ Qwen3.5-122B-A10B (~19 tok/s gen, ~45 tok/s prompt)     │
-│  ├─ ComfyUI (ROCm toolbox)           port 7860                 │
+│  ├─ llama-server (turboquant build)     port 8001               │
+│  │  └─ Qwen3.5-122B-A10B (~22 t/s gen, ~393 t/s prompt)        │
+│  ├─ ComfyUI (ROCm toolbox)             port 7860               │
 │  │  └─ Image/video gen (Wan 2.2, HunyuanVideo, Qwen Image)     │
-│  └─ llama-vlm-bom (ROCm toolbox)     port 8080                 │
+│  └─ llama-vlm-bom (ROCm toolbox)       port 8080               │
 │     └─ Qwen3-VL-32B (vision/BOM extraction)                    │
 │                                                                  │
 │  NPU (XDNA2 — 51 TOPS, 47μs latency)                           │
-│  └─ FastFlowLM / Lemonade            port 52625 (planned)       │
+│  └─ FastFlowLM                          port 52625              │
 │     └─ Small models: Whisper, embeddings, Qwen3.5:4b            │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -34,6 +34,18 @@ All GPU services run as **systemd user services** with auto-start on boot.
 | RAM | ~31GB visible to Linux (rest is GPU VRAM) |
 | BIOS | AMI v1.07 |
 
+## Software stack
+
+| Component | Version | Notes |
+|-----------|---------|-------|
+| Kernel | 7.0.0-rc6 (vanilla) | COPR `@kernel-vanilla/mainline-wo-mergew` |
+| Mesa | 25.3.6 | Vulkan RADV driver |
+| llama.cpp | turboquant build (8793) | Custom Vulkan build from `~/llama-cpp-turboquant` |
+| ROCm | 7.2 (kyuz0 toolbox) | For VLM + ComfyUI containers |
+| XRT | 2.23.0 | NPU runtime, built from `~/xdna-driver` |
+| amdxdna | 2.23.0 (DKMS) | NPU kernel module |
+| FastFlowLM | v0.9.36 | NPU inference server |
+
 ## Quick start
 
 ```bash
@@ -46,14 +58,46 @@ systemctl --user start llama-server comfyui
 
 For NPU setup, see [NPU Setup](#npu-setup) below.
 
+## Performance benchmarks
+
+### LLM inference (Qwen3.5-122B-A10B UD-Q4_K_XL)
+
+Tested on kernel 7.0-rc6, Mesa 25.3.6, Vulkan RADV, turboquant build 8793.
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Prompt processing (pp) | **393 t/s** | ~2K token prompt |
+| Token generation (tg) | **22 t/s** | Stable across runs |
+| Time to first token | **~430ms** | Short prompts |
+| Context size | 65536 | KV cache: q8_0 |
+
+#### Kernel comparison
+
+| Metric | Kernel 6.19.9 | Kernel 7.0-rc6 | Change |
+|--------|--------------|----------------|--------|
+| pp | 287-351 t/s | 393 t/s | +12-37% |
+| tg | 22-23 t/s | 22 t/s | No change |
+
+Kernel 7.0 significantly improves prompt processing via RADV/Vulkan improvements, but token generation is memory-bandwidth bound and unchanged.
+
+#### Optimization history
+
+| Setting | Tested values | Winner | Notes |
+|---------|--------------|--------|-------|
+| `--ubatch-size` | 512, 1024, 2048 | **1024** | pp 320 vs 266 vs 320, diminishing returns at 2048 |
+| `--kv-unified` | on, off | **off** | Hurt pp, broke prompt caching, no tg benefit |
+| `-ctk`/`-ctv` | turbo2, q8_0 | **q8_0** | turbo2 not supported on Vulkan (SET_ROWS op missing) |
+| `-fa` | on, off | **on** | Required for good performance on Strix Halo |
+
 ## Services
 
 | Service | Port | Backend | Startup | Description |
 |---------|------|---------|---------|-------------|
-| `llama-server` | 8001 | Vulkan | auto | LLM inference (llama.cpp b8461, kyuz0 build) |
+| `llama-server` | 8001 | Vulkan | auto | LLM inference (turboquant build 8793) |
 | `comfyui` | 7860 | ROCm | auto | Image/video gen (kyuz0 toolbox container) |
 | `llama-vlm-bom` | 8080 | ROCm | auto | Vision LLM (Qwen3-VL-32B, kyuz0 ROCm 7.2 toolbox) |
-| `lemonade` | 8000 | Vulkan | manual | Web UI + sd-cpp (optional, see below) |
+| `fastflowlm` | 52625 | NPU | auto | Small model inference (Qwen3.5:4b, Whisper) |
+| `lemonade` | 8000 | Vulkan | manual | Web UI + sd-cpp (optional) |
 
 ### Managing services
 
@@ -71,6 +115,24 @@ journalctl --user -u llama-server -f
 # Health check
 curl http://localhost:8001/health
 ```
+
+## Kernel boot parameters
+
+Required for optimal Strix Halo unified memory performance:
+
+```
+iommu=pt ttm.pages_limit=31457280
+```
+
+- `iommu=pt` — reduces overhead for iGPU unified memory access
+- `ttm.pages_limit=31457280` — caps pinned memory for GPU allocation
+
+Optional (recommended by kyuz0):
+```
+amdgpu.gttsize=126976
+```
+
+Set via `grubby` or `/etc/default/grub`.
 
 ## Containers (toolboxes)
 
@@ -171,39 +233,30 @@ ROCm toolbox containers use `--no-mmap` because ROCm's mmap path above 64GB is v
 
 ComfyUI also requires `--disable-mmap --cache-none --bf16-vae` for the same reason.
 
-### Model path contains a snapshot hash
-
-The model path in `llama-server.service` includes a HuggingFace snapshot hash:
-```
-models--unsloth--Qwen3.5-122B-A10B-GGUF/snapshots/51eab4d59d53f573fb9206cb3ce613f1d0aa392b/...
-```
-If you re-download the model, the hash changes. Update the path in the service file.
-
 ### FP8 is broken on gfx1151 — always use BF16
 
 FP8 is a **software limitation** on Strix Halo (RDNA 3.5). Always use BF16 models for image/video generation.
 
 ## Why Vulkan for LLM? Why ROCm for image gen?
 
-**LLM inference**: ROCm doesn't reliably detect gfx1151 for all workloads. Vulkan via RADV works perfectly and uses the full 96GB unified VRAM. The standalone llama-server (b8461, kyuz0 Vulkan build) gives the best LLM performance.
+**LLM inference**: ROCm doesn't reliably detect gfx1151 for all workloads. Vulkan via RADV works perfectly and uses the full 96GB unified VRAM. The custom turboquant build gives the best LLM performance.
 
 **Image/video generation**: ComfyUI and PyTorch-based pipelines require ROCm. The kyuz0 toolbox containers include patched ROCm (TheRock nightlies) that work on gfx1151 with `HSA_OVERRIDE_GFX_VERSION=11.5.1`.
 
 | | Vulkan (RADV) | ROCm (kyuz0 toolbox) |
 |---|---|---|
-| LLM (llama.cpp) | ~19-57 tok/s | ~40 tok/s (with hipBLASLt) |
+| LLM (llama.cpp) | **~22 t/s gen, ~393 t/s pp** | ~21 t/s gen, ~268 t/s pp |
 | Image gen (ComfyUI) | N/A | ~198 it/s |
-| Long context (128K+) | ~17 tok/s pp | ~51 tok/s pp (with FA) |
 | Stability | Excellent | Good (needs toolbox) |
 
 ## Models
 
 ### LLM (llama-server on port 8001)
 
-| Model | Type | Active Params | Speed | Use case |
-|-------|------|---------------|-------|----------|
-| Qwen3.5-122B-A10B | MoE | 10B | ~19 tok/s gen, ~45 tok/s prompt | Default, SOTA quality |
-| Qwen3-30B-A3B | MoE | 3B | ~57 tok/s | Fast chat, coding |
+| Model | Type | Active Params | Quant | Speed | Use case |
+|-------|------|---------------|-------|-------|----------|
+| Qwen3.5-122B-A10B | MoE | 10B | UD-Q4_K_XL | ~22 t/s gen, ~393 t/s pp | Default, SOTA quality |
+| Qwen3-30B-A3B | MoE | 3B | — | ~57 t/s | Fast chat, coding |
 
 To switch models, update the `-m` path in `llama-server.service` and restart:
 ```bash
@@ -227,12 +280,28 @@ Toolbox: `kyuz0/amd-strix-halo-comfyui:latest` (ROCm TheRock nightlies)
 | Qwen Image Edit | Image Editing | Lightning LoRA |
 | Wan 2.2 | I2V / T2V | 14B model with 4-step Lightning LoRA |
 
+## Building llama.cpp (turboquant Vulkan)
+
+The current LLM server uses a custom turboquant build for better MoE quantization:
+
+```bash
+cd ~/llama-cpp-turboquant
+git pull
+mkdir -p build && cd build
+cmake .. -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build . --config Release -j$(nproc)
+
+# Update service
+systemctl --user restart llama-server
+curl http://localhost:8001/health  # wait for model to load (~35s)
+```
+
 ## Structure
 
 ```
 ├── setup.sh                              # Main setup script
 ├── systemd/
-│   ├── llama-server.service              # Standalone LLM server (Vulkan, auto-enabled)
+│   ├── llama-server.service              # LLM server (Vulkan turboquant, auto-enabled)
 │   ├── llama-vlm-bom.service             # Vision LLM server (ROCm toolbox, auto-enabled)
 │   ├── comfyui.service                   # ComfyUI (ROCm toolbox, auto-enabled)
 │   └── lemonade.service                  # Lemonade router (optional, disabled by default)
@@ -250,32 +319,15 @@ Toolbox: `kyuz0/amd-strix-halo-comfyui:latest` (ROCm TheRock nightlies)
 
 | Component | Version | Date | Notes |
 |-----------|---------|------|-------|
-| llama-server | b8461 (kyuz0 Vulkan RADV) | 2026-03 | ~45 tok/s prompt, ~19 tok/s gen |
+| llama.cpp | turboquant 8793 (custom Vulkan) | 2026-04-03 | 393 t/s pp, 22 t/s tg |
+| llama-server | b8461 (kyuz0 Vulkan RADV) | 2026-03 | 351 t/s pp, 19 t/s tg (replaced) |
 | llama-server | b8299 (official release) | 2026-03-13 | +40% prompt speed over b8119 |
 | llama-server | b8119 (kyuz0 custom) | 2026-02 | Initial build |
+| Kernel | 7.0.0-rc6 (vanilla) | 2026-04-04 | +12-37% pp over 6.19.9 |
+| Kernel | 6.19.9 (Fedora 43) | 2026-03 | Previous stable |
 | XRT | 2.23.0 | 2026-03-22 | Built from amd/xdna-driver submodule |
 | amdxdna driver | 2.23.0 (DKMS) | 2026-03-22 | Out-of-tree, replaces kernel v0.6.0 |
 | NPU firmware | 1.0.0.166 | 2026-03 | Protocol v6.x |
-
-## Upgrading llama-server
-
-The llama-server binary at `~/.lemonade/bin/llamacpp/vulkan/` can be upgraded independently. Official releases and kyuz0 builds include pre-built Vulkan binaries.
-
-```bash
-# Stop service, replace binaries, restart
-systemctl --user stop llama-server
-VULKAN_DIR="$HOME/.lemonade/bin/llamacpp/vulkan"
-
-# Backup old build
-cp "$VULKAN_DIR/llama-server" "$VULKAN_DIR/llama-server.bak-$(date +%Y%m%d)"
-
-# Copy new binaries (all .so files required — llama.cpp dynamically loads backends)
-# From kyuz0 Docker: docker cp from kyuz0/amd-strix-halo-toolboxes:vulkan-radv
-# From official release: download from https://github.com/ggml-org/llama.cpp/releases
-
-systemctl --user start llama-server
-curl http://localhost:8001/health  # wait for model to load (~35s)
-```
 
 ## Troubleshooting
 
@@ -291,8 +343,8 @@ Must show `--mmap`, not `--no-mmap`. See [critical notes](#--mmap-is-required-fo
 journalctl --user -u llama-server --no-pager -n 50
 ```
 Common causes:
-- **"no usable GPU found"** — Vulkan backend libs missing. Ensure `libggml-vulkan.so` exists in `~/.lemonade/bin/llamacpp/vulkan/`
-- **Model path changed** (snapshot hash) — update `-m` in service file
+- **"no usable GPU found"** — Vulkan backend libs missing. Check build output.
+- **Model path changed** — update `-m` in service file
 - **Esuna not mounted** — check `mount | grep Esuna`
 
 ### NPU not detected by xrt-smi
