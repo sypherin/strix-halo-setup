@@ -64,20 +64,42 @@ For NPU setup, see [NPU Setup](#npu-setup) below.
 
 **Active primary (2026-04-29): Qwen3.6-35B-A3B UD-Q8_K_XL** at 128k context.
 Smaller MoE swapped in 2026-04-23, replacing the older Qwen3.5-122B-A10B-UD-Q4_K_XL
-setup. Lower latency, higher quality on tool-use / coding / reasoning at this
-scale. Fresh benchmarks for the new model are pending — numbers below are the
-last captured run on the previous default and remain a useful baseline for the
-host config (kernel / driver / build).
+setup. With ~3B active parameters per token (vs 10B on Qwen3.5-122B), throughput
+roughly doubles end-to-end at lower memory pressure.
 
-#### Legacy baseline (Qwen3.5-122B-A10B UD-Q4_K_XL)
+#### Qwen3.6-35B-A3B UD-Q8_K_XL — kernel 7.0 stable
 
-Tested on kernel 7.0-rc6, Mesa 25.3.6, Vulkan RADV, llama.cpp build 8793.
+Tested 2026-04-29 against the live llama-server on `:8001`. Host: kernel
+7.0.0-261 vanilla, Mesa 25.3.6, Vulkan RADV, llama-cpp-turboquant build.
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| Prompt processing (pp) | **393 t/s** | ~2K token prompt |
-| Token generation (tg) | **22 t/s** | Stable across runs |
-| Time to first token | **~430ms** | Short prompts |
+| Prompt processing (pp) | **~839 t/s** | 10,223-token prompt |
+| Token generation (tg) | **~44 t/s** | 64-token generation, no reasoning |
+| Time to first token | **~254ms** | 23-token prompt, --no-warmup hot |
+| Context size | 131072 | KV cache: q8_0 |
+
+Numbers are taken from the server's own `timings` field on real OpenAI-compatible
+chat-completion requests, not synthetic `llama-bench` runs — i.e. they reflect
+actual end-user latency including the chat template + jinja rendering.
+
+**Note on long-generation throughput.** Streaming a 512-token reply with the
+default `--reasoning-budget 500` and the model's built-in thinking mode produced
+~7 t/s wall-clock on a single request. The slowdown is not a Vulkan/host issue
+— Qwen3.6 silently emits thinking tokens that don't get counted in `predicted_n`,
+so the t/s reported is artificially low. For "real" tg comparisons against
+non-thinking models, set `--reasoning-budget 0` or use a no-reasoning system
+prompt.
+
+#### Legacy baseline — Qwen3.5-122B-A10B UD-Q4_K_XL (kernel 7.0-rc6)
+
+Retained for host-config reference. Tested kernel 7.0-rc6, Mesa 25.3.6.
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Prompt processing (pp) | 393 t/s | ~2K token prompt |
+| Token generation (tg) | 22 t/s | Stable across runs |
+| Time to first token | ~430ms | Short prompts |
 | Context size | 65536 | KV cache: q8_0 |
 
 #### Kernel comparison
@@ -264,7 +286,7 @@ FP8 is a **software limitation** on Strix Halo (RDNA 3.5). Always use BF16 model
 
 | Model | Type | Active Params | Quant | Speed | Use case |
 |-------|------|---------------|-------|-------|----------|
-| **Qwen3.6-35B-A3B** | MoE | 3B | UD-Q8_K_XL | bench pending | **Default (2026-04-23+)** — tool-use, coding, reasoning at 128k ctx |
+| **Qwen3.6-35B-A3B** | MoE | 3B | UD-Q8_K_XL | ~44 t/s gen, ~839 t/s pp | **Default (2026-04-23+)** — tool-use, coding, reasoning at 128k ctx |
 | Qwen3.5-122B-A10B | MoE | 10B | UD-Q4_K_XL | ~22 t/s gen, ~393 t/s pp | Legacy, SOTA quality but slower |
 | Qwen3-30B-A3B | MoE | 3B | — | ~57 t/s | Fast chat / draft |
 
