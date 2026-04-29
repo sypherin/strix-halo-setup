@@ -8,7 +8,7 @@ Local LLM/VLM + image/video generation + NPU inference for AMD Strix Halo APU (R
 ┌──────────────────────────────────────────────────────────────────┐
 │  GPU (Vulkan RADV — 96GB unified VRAM)                          │
 │  ├─ llama-server (Vulkan, llama.cpp)     port 8001               │
-│  │  └─ Qwen3.5-122B-A10B (~22 t/s gen, ~393 t/s prompt)        │
+│  │  └─ Qwen3.6-35B-A3B (UD-Q8_K_XL, 128k ctx, primary)         │
 │  ├─ ComfyUI (ROCm toolbox)             port 7860               │
 │  │  └─ Image/video gen (Wan 2.2, HunyuanVideo, Qwen Image)     │
 │  └─ llama-vlm-bom (ROCm toolbox)       port 8080               │
@@ -60,7 +60,16 @@ For NPU setup, see [NPU Setup](#npu-setup) below.
 
 ## Performance benchmarks
 
-### LLM inference (Qwen3.5-122B-A10B UD-Q4_K_XL)
+### LLM inference
+
+**Active primary (2026-04-29): Qwen3.6-35B-A3B UD-Q8_K_XL** at 128k context.
+Smaller MoE swapped in 2026-04-23, replacing the older Qwen3.5-122B-A10B-UD-Q4_K_XL
+setup. Lower latency, higher quality on tool-use / coding / reasoning at this
+scale. Fresh benchmarks for the new model are pending — numbers below are the
+last captured run on the previous default and remain a useful baseline for the
+host config (kernel / driver / build).
+
+#### Legacy baseline (Qwen3.5-122B-A10B UD-Q4_K_XL)
 
 Tested on kernel 7.0-rc6, Mesa 25.3.6, Vulkan RADV, llama.cpp build 8793.
 
@@ -255,8 +264,9 @@ FP8 is a **software limitation** on Strix Halo (RDNA 3.5). Always use BF16 model
 
 | Model | Type | Active Params | Quant | Speed | Use case |
 |-------|------|---------------|-------|-------|----------|
-| Qwen3.5-122B-A10B | MoE | 10B | UD-Q4_K_XL | ~22 t/s gen, ~393 t/s pp | Default, SOTA quality |
-| Qwen3-30B-A3B | MoE | 3B | — | ~57 t/s | Fast chat, coding |
+| **Qwen3.6-35B-A3B** | MoE | 3B | UD-Q8_K_XL | bench pending | **Default (2026-04-23+)** — tool-use, coding, reasoning at 128k ctx |
+| Qwen3.5-122B-A10B | MoE | 10B | UD-Q4_K_XL | ~22 t/s gen, ~393 t/s pp | Legacy, SOTA quality but slower |
+| Qwen3-30B-A3B | MoE | 3B | — | ~57 t/s | Fast chat / draft |
 
 To switch models, update the `-m` path in `llama-server.service` and restart:
 ```bash

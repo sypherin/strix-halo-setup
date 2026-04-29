@@ -1,5 +1,5 @@
 [Unit]
-Description=llama-server (Vulkan - Strix Halo - Qwen3.5-122B-A10B)
+Description=llama-server (Vulkan - Strix Halo - Qwen3.6-35B-A3B)
 After=default.target
 
 [Service]
@@ -9,35 +9,54 @@ Type=simple
 #
 # IMPORTANT flags:
 #   --mmap           REQUIRED for Vulkan. Maps weights into 96GB unified VRAM.
-#                    Without it, the 72GB model loads into 31GB system RAM → swap death.
+#                    Without it the model loads into system RAM → swap death
+#                    on anything bigger than ~30GB.
 #   -fa 1            Flash attention — required for good performance on Strix Halo.
-#   -ctk q8_0        KV cache type for keys (turbo2 not supported on Vulkan).
+#   -ctk q8_0        KV cache type for keys (turbo2/turbo3 not supported on Vulkan).
 #   -ctv q8_0        KV cache type for values.
 #   --ubatch-size 1024  Sweet spot for MoE prefill on Vulkan (tested 512/1024/2048).
-#   --cache-prompt   Cache prompt tokens for faster re-processing.
-#   --reasoning-budget 500  Cap thinking tokens to avoid runaway reasoning.
+#   --cache-prompt   Cache prompt tokens for faster re-processing (in-slot only;
+#                    --cache-reuse for cross-slot is silently ignored on SWA models).
+#   --reasoning-budget 500    Cap thinking tokens to avoid runaway reasoning.
+#   --reasoning-format auto   Wrap thinking in <think>…</think> by default.
 #
-# Performance (kernel 7.0-rc6, Mesa 25.3.6, RADV):
-#   pp: ~393 t/s (2K tokens)
-#   tg: ~22 t/s
+# Active model (2026-04-29): Qwen3.6-35B-A3B (UD-Q8_K_XL quant, ~37GB on disk).
+# Smaller MoE swapped in as primary 2026-04-23, replacing the older
+# Qwen3.5-122B-A10B-UD-Q4_K_XL setup. Lower latency + higher quality on
+# tool-use / coding / reasoning at this scale, fits comfortably in 96GB
+# unified VRAM with full 128k context.
+#
+# Performance (model-pending fresh bench; baseline 2026-04-04 with previous
+# Qwen3.5-122B-A10B-UD-Q4_K_XL on kernel 7.0-rc6 / Mesa 25.3.6 / RADV):
+#   pp:   ~393 t/s (2K tokens)
+#   tg:   ~22 t/s
 #   TTFT: ~430ms
+# Re-bench Qwen3.6-35B-A3B once kernel 7.0-stable benchmarks are captured.
+#
+# Env:
+#   GGML_VK_PREFER_HOST_MEMORY=ON   community-recommended for Vulkan on RDNA 3.5
+#                                   to keep KV/intermediate tensors in host
+#                                   pinned memory rather than VRAM, reduces
+#                                   GTT thrash on long contexts.
+#   Note (2026-04-11): turbo3 KV cache CRASHES on Vulkan flash_attn
+#   ("Br != wg_denoms[0]" assertion) — stay on q8_0 until upstream fix.
+Environment=GGML_VK_PREFER_HOST_MEMORY=ON
 ExecStart=/home/awpapa/llama-cpp-turboquant/build/bin/llama-server \
-  -m /mnt/Esuna/models/unsloth-qwen3.5-122b-a10b/UD-Q4_K_XL/Qwen3.5-122B-A10B-UD-Q4_K_XL-00001-of-00003.gguf \
-  --ctx-size 65536 \
+  -m /mnt/Esuna/models/unsloth-qwen3.6-35b-a3b/Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf \
+  --ctx-size 131072 \
   --port 8001 \
   --host 0.0.0.0 \
   --no-warmup \
   -ngl 99 \
   --mmap \
   --jinja \
-  --reasoning-format auto \
   --ubatch-size 1024 \
   -fa 1 \
   -ctk q8_0 \
   -ctv q8_0 \
   --cache-prompt \
   --reasoning-budget 500 \
-  --reasoning-budget-message "Thinking budget reached. Stop thinking and answer directly."
+  --reasoning-format auto
 Restart=on-failure
 RestartSec=10
 
