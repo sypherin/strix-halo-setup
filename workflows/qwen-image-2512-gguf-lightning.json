@@ -1,0 +1,90 @@
+{
+  "comment": "ComfyUI API-format workflow: Qwen-Image-2512 Q6_K GGUF + Lightning 4-step LoRA, 1024x1024. ~36s warm steady-state on Strix Halo gfx1151. Replace prompt in node 6.",
+  "prompt": {
+    "1": {
+      "class_type": "UnetLoaderGGUF",
+      "inputs": {
+        "unet_name": "qwen-image-2512-Q6_K.gguf"
+      }
+    },
+    "2": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "type": "qwen_image"
+      }
+    },
+    "3": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "qwen_image_vae.safetensors"
+      }
+    },
+    "4": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "model": ["1", 0],
+        "lora_name": "Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors",
+        "strength_model": 1.0
+      }
+    },
+    "5": {
+      "class_type": "ModelSamplingAuraFlow",
+      "inputs": {
+        "model": ["4", 0],
+        "shift": 3.1
+      }
+    },
+    "6": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": ["2", 0],
+        "text": "REPLACE WITH YOUR PROMPT — e.g. a photorealistic ginger cat on a wooden table by a window, soft natural light"
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": ["2", 0],
+        "text": ""
+      }
+    },
+    "8": {
+      "class_type": "EmptySD3LatentImage",
+      "inputs": {
+        "width": 1024,
+        "height": 1024,
+        "batch_size": 1
+      }
+    },
+    "9": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": ["5", 0],
+        "seed": 42,
+        "steps": 4,
+        "cfg": 1.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1.0,
+        "positive": ["6", 0],
+        "negative": ["7", 0],
+        "latent_image": ["8", 0]
+      }
+    },
+    "10": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["9", 0],
+        "vae": ["3", 0]
+      }
+    },
+    "11": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "qwen_gguf",
+        "images": ["10", 0]
+      }
+    }
+  }
+}

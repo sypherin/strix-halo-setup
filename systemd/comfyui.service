@@ -7,12 +7,28 @@ Type=simple
 # Runs ComfyUI inside the kyuz0 strix-halo-comfyui toolbox container.
 # Image: docker.io/kyuz0/amd-strix-halo-comfyui:latest
 #
-# IMPORTANT flags (from kyuz0 README):
+# IMPORTANT flags:
 #   --bf16-vae       Prevents OOM during VAE decode (replaces old --fp32-vae)
 #   --disable-mmap   Critical for gfx1151 — mmap above 64GB is very slow on ROCm
-#   --cache-none     Better unified memory management (GTT vs RAM)
+#   --highvram       Model stays resident between gens (was --lowvram in kyuz0
+#                    default; safe on Strix Halo with 124GB GTT, gives much
+#                    faster warm gens — ~36s warm vs ~120s cold)
 #   --listen 0.0.0.0 Allow connections from host (toolbox uses host networking)
-ExecStart=/usr/bin/toolbox run -c strix-halo-comfyui bash -c 'cd /opt/ComfyUI && /opt/venv/bin/python main.py --listen 0.0.0.0 --port 7860 --bf16-vae --disable-mmap --cache-none'
+#
+# Env vars (per smarttechlabs/strix-halo-comfyui install script):
+#   GPU_MAX_HEAP_SIZE=100         Lift PyTorch HIP heap cap (default ~32GB)
+#   GPU_MAX_ALLOC_PERCENT=100     Allow PyTorch full GPU memory access
+#   HIP_VISIBLE_DEVICES=0         Pin to GPU 0
+#   AMD_LOG_LEVEL=0               Quiet
+# (Did NOT set MIOPEN_FIND_MODE / PYTORCH_TUNABLEOP / ROCBLAS_USE_HIPBLASLT
+#  per IgnatBeresnev report — they cause X11 crashes on gfx1151. Do NOT set
+#  PYTORCH_HIP_ALLOC_CONF=:16:8:32GB either — that exact string from the
+#  bkpaine1 guide crashes torch nightly's tokenizer with c10::Error.)
+Environment=GPU_MAX_HEAP_SIZE=100
+Environment=GPU_MAX_ALLOC_PERCENT=100
+Environment=HIP_VISIBLE_DEVICES=0
+Environment=AMD_LOG_LEVEL=0
+ExecStart=/usr/bin/toolbox run -c strix-halo-comfyui bash -c 'unset CUDA_VISIBLE_DEVICES && export GPU_MAX_HEAP_SIZE=100 GPU_MAX_ALLOC_PERCENT=100 HIP_VISIBLE_DEVICES=0 AMD_LOG_LEVEL=0 && cd /opt/ComfyUI && /opt/venv/bin/python main.py --listen 0.0.0.0 --port 7860 --bf16-vae --disable-mmap --highvram'
 Restart=on-failure
 RestartSec=10
 
