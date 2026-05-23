@@ -8,7 +8,7 @@ Local LLM/VLM + image/video generation + NPU inference for AMD Strix Halo APU (R
 ┌──────────────────────────────────────────────────────────────────┐
 │  GPU (Vulkan RADV — 96GB unified VRAM)                          │
 │  ├─ llama-server (Vulkan, llama.cpp)     port 8001               │
-│  │  └─ Qwen3.6-35B-A3B (UD-Q8_K_XL, 128k ctx, primary)         │
+│  │  └─ Gemma 4 26B-A4B-it (UD-Q8_K_XL, 128k ctx, primary)       │
 │  ├─ ComfyUI (ROCm toolbox)             port 7860               │
 │  │  └─ Image/video gen (Wan 2.2, HunyuanVideo, Qwen Image)     │
 │  └─ llama-vlm-bom (ROCm toolbox)       port 8080               │
@@ -62,10 +62,26 @@ For NPU setup, see [NPU Setup](#npu-setup) below.
 
 ### LLM inference
 
-**Active primary (2026-04-29): Qwen3.6-35B-A3B UD-Q8_K_XL** at 128k context.
-Smaller MoE swapped in 2026-04-23, replacing the older Qwen3.5-122B-A10B-UD-Q4_K_XL
-setup. With ~3B active parameters per token (vs 10B on Qwen3.5-122B), throughput
-roughly doubles end-to-end at lower memory pressure.
+**Active primary (2026-05-23): Gemma 4 26B-A4B-it UD-Q8_K_XL** at 128k context.
+Swapped in on 2026-05-08 for the prior Qwen3.6-35B-A3B primary — chosen for
+output quality on the document-extraction + tool-use workloads this box now
+serves. Active parameters/token are slightly higher (~4B vs Qwen's ~3B), so
+raw throughput is modestly lower; benchmarks below quantify the trade.
+
+Qwen3.6-35B-A3B and the older Qwen3.5-122B-A10B unit are retained as fallbacks
+(see `systemd/llama-server-qwen36.service` and the legacy table further down).
+
+#### Gemma 4 26B-A4B-it UD-Q8_K_XL — kernel 7.0 stable
+
+Tested 2026-05-23 against the live llama-server on `:8001`. Host: kernel
+7.0.0-261 vanilla, Mesa 25.3.6, Vulkan RADV, llama-cpp-turboquant build.
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Prompt processing (pp) | **~720 t/s** | 10K-token prompt, 3-run avg (warm runs: 698, 741 t/s) |
+| Token generation (tg) | **~41 t/s** | 64-token generation, 3-run avg, hot |
+| Time to first token | **~269ms** | Short prompt, streamed, 3-run avg (257, 275, 274 ms) |
+| Context size | 131072 | KV cache: q8_0 |
 
 #### Qwen3.6-35B-A3B UD-Q8_K_XL — kernel 7.0 stable
 
@@ -79,9 +95,17 @@ Tested 2026-04-29 against the live llama-server on `:8001`. Host: kernel
 | Time to first token | **~254ms** | 23-token prompt, --no-warmup hot |
 | Context size | 131072 | KV cache: q8_0 |
 
-Numbers are taken from the server's own `timings` field on real OpenAI-compatible
-chat-completion requests, not synthetic `llama-bench` runs — i.e. they reflect
-actual end-user latency including the chat template + jinja rendering.
+Numbers in both tables are taken from the server's own `timings` field on real
+OpenAI-compatible chat-completion requests, not synthetic `llama-bench` runs —
+i.e. they reflect actual end-user latency including the chat template + jinja
+rendering.
+
+**Trade quantified.** Moving from Qwen3.6-35B-A3B (3B active) to Gemma 4 26B-A4B
+(4B active) costs ~14% on pp (839 → 720), ~7% on tg (44 → 41), and adds ~15ms
+on TTFT (254 → 269). All within the expected ~33% active-param ratio. Decode
+quality on long-form extraction + structured-output workloads improved enough
+to justify the throughput cost for this box's workload mix; your mileage will
+depend on what you're shipping.
 
 **Note on long-generation throughput.** Streaming a 512-token reply with the
 default `--reasoning-budget 500` and the model's built-in thinking mode produced
@@ -286,7 +310,8 @@ FP8 is a **software limitation** on Strix Halo (RDNA 3.5). Always use BF16 model
 
 | Model | Type | Active Params | Quant | Speed | Use case |
 |-------|------|---------------|-------|-------|----------|
-| **Qwen3.6-35B-A3B** | MoE | 3B | UD-Q8_K_XL | ~44 t/s gen, ~839 t/s pp | **Default (2026-04-23+)** — tool-use, coding, reasoning at 128k ctx |
+| **Gemma 4 26B-A4B-it** | MoE | 4B | UD-Q8_K_XL | ~41 t/s gen, ~720 t/s pp | **Default (2026-05-08+)** — extraction quality, structured output, tool use at 128k ctx |
+| Qwen3.6-35B-A3B | MoE | 3B | UD-Q8_K_XL | ~44 t/s gen, ~839 t/s pp | Fallback (2026-04-23+) — faster decode, comparable tool-use |
 | Qwen3.5-122B-A10B | MoE | 10B | UD-Q4_K_XL | ~22 t/s gen, ~393 t/s pp | Legacy, SOTA quality but slower |
 | Qwen3-30B-A3B | MoE | 3B | — | ~57 t/s | Fast chat / draft |
 
