@@ -43,7 +43,7 @@ Type=simple
 #   Note (2026-04-11): turbo3 KV cache CRASHES on Vulkan flash_attn
 #   ("Br != wg_denoms[0]" assertion) — stay on q8_0 until upstream fix.
 Environment=GGML_VK_PREFER_HOST_MEMORY=ON
-ExecStart=/home/awpapa/llama-cpp-turboquant/build/bin/llama-server \
+ExecStart=%h/llama-cpp-turboquant/build/bin/llama-server \
   -m /mnt/Esuna/models/unsloth-qwen3.6-35b-a3b/Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf \
   --ctx-size 131072 \
   --port 8001 \
