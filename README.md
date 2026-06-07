@@ -11,11 +11,17 @@ Local LLM/VLM + image/video generation + NPU inference for AMD Strix Halo APU (R
 │  │  └─ Gemma 4 26B-A4B-it (UD-Q8_K_XL, 128k ctx, primary)       │
 │  ├─ ComfyUI (ROCm toolbox)             port 7860               │
 │  │  └─ Image/video gen (Wan 2.2, HunyuanVideo, Qwen Image)     │
-│  └─ llama-vlm-bom (ROCm toolbox)       port 8080               │
-│     └─ Qwen3-VL-32B (vision/BOM extraction)                    │
+│  ├─ llama-vlm-bom (ROCm toolbox)       port 8080               │
+│  │  └─ Qwen3-VL-32B (vision/BOM extraction)                    │
+│  ├─ llama-surya2 (ROCm toolbox)        port 8093               │
+│  │  └─ Surya 2 OCR VLM 650M (DocFlow OCR, prod)                │
+│  ├─ surya-server (podman, dedicated)   port 8090               │
+│  │  └─ Surya v1 layout+OCR (legacy path)                       │
+│  └─ llama-server-qwen36 (Vulkan)       port 8092 (disabled)    │
+│     └─ Qwen3.6-27B Q4 + mmproj (single-pass DO extract)        │
 │                                                                  │
 │  NPU (XDNA2 — 51 TOPS, 47μs latency)                           │
-│  └─ FastFlowLM                          port 52625              │
+│  └─ FastFlowLM (installed, NOT running) port 52625              │
 │     └─ Small models: Whisper, embeddings, Qwen3.5:4b            │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -39,9 +45,9 @@ All GPU services run as **systemd user services** with auto-start on boot.
 
 | Component | Version | Notes |
 |-----------|---------|-------|
-| Kernel | 7.0.0-rc6 (vanilla) | COPR `@kernel-vanilla/mainline-wo-mergew` |
+| Kernel | 7.1.0-rc4 (vanilla) | COPR `@kernel-vanilla/mainline-wo-mergew` |
 | Mesa | 25.3.6 | Vulkan RADV driver |
-| llama.cpp | 8793 (Vulkan build) | Built from `~/llama-cpp-turboquant` fork (turbo KV cache is CPU-only, not used on Vulkan) |
+| llama.cpp | 9427 (Vulkan build) | Built from `~/llama-cpp-turboquant` fork (turbo KV cache is CPU-only, not used on Vulkan) |
 | ROCm | 7.2 (kyuz0 toolbox) | For VLM + ComfyUI containers |
 | XRT | 2.23.0 | NPU runtime, built from `~/xdna-driver` |
 | amdxdna | 2.23.0 (DKMS) | NPU kernel module |
@@ -152,7 +158,7 @@ Kernel 7.0 significantly improves prompt processing via RADV/Vulkan improvements
 | `llama-server` | 8001 | Vulkan | auto | LLM inference (llama.cpp 8793, Vulkan RADV) |
 | `comfyui` | 7860 | ROCm | auto | Image/video gen (kyuz0 toolbox container) |
 | `llama-vlm-bom` | 8080 | ROCm | auto | Vision LLM (Qwen3-VL-32B, kyuz0 ROCm 7.2 toolbox) |
-| `fastflowlm` | 52625 | NPU | auto | Small model inference (Qwen3.5:4b, Whisper) |
+| `fastflowlm` | 52625 | NPU | **not running** (binary at /opt/fastflowlm, no systemd unit) | Small model inference (Qwen3.5:4b, Whisper) |
 | `lemonade` | 8000 | Vulkan | manual | Web UI + sd-cpp (optional) |
 
 ### Managing services
@@ -384,7 +390,7 @@ curl http://localhost:8001/health  # wait for model to load (~35s)
 | llama-server | b8461 (kyuz0 Vulkan RADV) | 2026-03 | 351 t/s pp, 19 t/s tg (replaced) |
 | llama-server | b8299 (official release) | 2026-03-13 | +40% prompt speed over b8119 |
 | llama-server | b8119 (kyuz0 custom) | 2026-02 | Initial build |
-| Kernel | 7.0.0-rc6 (vanilla) | 2026-04-04 | +12-37% pp over 6.19.9 |
+| Kernel | 7.1.0-rc4 (vanilla) | 2026-04-04 | +12-37% pp over 6.19.9 |
 | Kernel | 6.19.9 (Fedora 43) | 2026-03 | Previous stable |
 | XRT | 2.23.0 | 2026-03-22 | Built from amd/xdna-driver submodule |
 | amdxdna driver | 2.23.0 (DKMS) | 2026-03-22 | Out-of-tree, replaces kernel v0.6.0 |
