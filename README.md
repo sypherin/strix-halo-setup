@@ -1,12 +1,12 @@
 # Strix Halo Local AI Setup
 
-Local LLM/VLM + image/video generation + NPU inference for AMD Strix Halo APU (Ryzen AI MAX+ 395, Radeon 8060S iGPU, XDNA2 NPU) with 96GB unified VRAM.
+Local LLM/VLM + image/video generation + NPU inference for AMD Strix Halo APU (Ryzen AI MAX+ 395, Radeon 8060S iGPU, XDNA2 NPU) with 128GB unified LPDDR5X (124GiB visible to Linux; the iGPU addresses nearly all of it via GTT).
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  GPU (Vulkan RADV — 96GB unified VRAM)                          │
+│  GPU (Vulkan RADV + ROCm toolboxes — ~124GiB unified via GTT)   │
 │  ├─ llama-server (Vulkan, llama.cpp)     port 8001               │
 │  │  └─ Gemma 4 26B-A4B-it (UD-Q8_K_XL, 128k ctx, primary)       │
 │  ├─ ComfyUI (ROCm toolbox)             port 7860               │
@@ -29,9 +29,10 @@ All GPU services run as **systemd user services** with auto-start on boot.
 | Board | Sixunited AXB35 (BeyondMax Series) |
 | CPU | AMD Ryzen AI MAX+ 395 (32 threads) |
 | GPU | Radeon 8060S (RDNA 3.5, gfx1151) |
-| VRAM | 96GB unified (VGM BIOS setting) |
+| VRAM | BIOS VGM carve: **1GB** (deliberate — GPU allocates from GTT instead) |
 | NPU | XDNA2 aie2p 6x8 (PCI c7:00.1, 1022:17f0 rev 11) |
-| RAM | ~31GB visible to Linux (rest is GPU VRAM) |
+| RAM | 128GB LPDDR5X-8000 physical; **124GiB visible to Linux** |
+| GTT | ~124GiB GPU-addressable (`amdgpu.gttsize=126976`, `ttm.pages_limit=32505856`) |
 | BIOS | AMI v1.07 |
 
 ## Software stack
@@ -176,16 +177,14 @@ curl http://localhost:8001/health
 Required for optimal Strix Halo unified memory performance:
 
 ```
-iommu=pt ttm.pages_limit=31457280
+iommu=pt amdgpu.gttsize=126976 ttm.pages_limit=32505856
 ```
 
 - `iommu=pt` — reduces overhead for iGPU unified memory access
-- `ttm.pages_limit=31457280` — caps pinned memory for GPU allocation
+- `amdgpu.gttsize=126976` — GTT window of 124GiB (126976 MiB) so the iGPU can address nearly all system RAM
+- `ttm.pages_limit=32505856` — pinned-pages cap matching the GTT window (32505856 × 4KiB = 124GiB)
 
-Optional (recommended by kyuz0):
-```
-amdgpu.gttsize=126976
-```
+Pairs with the BIOS: **VGM/UMA set to the 1GB minimum**, NOT a big dedicated carve. The GPU then allocates from GTT on demand — RAM stays flexible between CPU and GPU instead of being hard-partitioned at boot. (An earlier revision of this setup used a 96GB VGM carve, which left Linux only ~31GB of system RAM; that approach is retired and this README previously described it.)
 
 Set via `grubby` or `/etc/default/grub`.
 
@@ -274,13 +273,18 @@ The NPU (55 TOPS INT8) is best for small always-on models, freeing the GPU for l
 
 ## Critical configuration notes
 
-### --mmap is REQUIRED for Vulkan (do NOT use --no-mmap)
+### mmap vs --no-mmap under the GTT regime (updated 2026-06-08)
 
-Strix Halo has 96GB unified memory shared between CPU and GPU, but Linux only sees ~31GB as system RAM. Using `--no-mmap` forces the entire model (72GB for Qwen3.5-122B) into system RAM, causing:
-- All 31GB RAM consumed + swap thrashing
-- System becomes unusable
+The old advice here ("--mmap is REQUIRED for Vulkan") dated from the 96GB-VGM-carve era, when Linux only saw ~31GB of RAM and `--no-mmap` would swap-thrash. **That no longer applies.** With the current 1GB carve + 124GiB GTT, model weights live in host RAM either way.
 
-With `--mmap`, the Vulkan driver maps model weights directly into unified VRAM. System RAM stays at ~6GB used.
+The deployed llama-server units now run `--no-mmap` with:
+
+```
+GGML_VK_PREFER_HOST_MEMORY=ON
+RADV_PERFTEST=nogttspill
+```
+
+which loads weights into host memory up front (no first-token page-fault stalls) and lets RADV use the full GTT window. If you change this, benchmark — don't cargo-cult either flag.
 
 ### --no-mmap is REQUIRED for ROCm (opposite of Vulkan!)
 
@@ -294,7 +298,7 @@ FP8 is a **software limitation** on Strix Halo (RDNA 3.5). Always use BF16 model
 
 ## Why Vulkan for LLM? Why ROCm for image gen?
 
-**LLM inference**: ROCm doesn't reliably detect gfx1151 for all workloads. Vulkan via RADV works perfectly and uses the full 96GB unified VRAM.
+**LLM inference**: ROCm doesn't reliably detect gfx1151 for all workloads. Vulkan via RADV works perfectly and uses the full unified pool (~124GiB GTT).
 
 **Image/video generation**: ComfyUI and PyTorch-based pipelines require ROCm. The kyuz0 toolbox containers include patched ROCm (TheRock nightlies) that work on gfx1151 with `HSA_OVERRIDE_GFX_VERSION=11.5.1`.
 
