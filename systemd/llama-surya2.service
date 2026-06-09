@@ -1,0 +1,24 @@
+[Unit]
+Description=llama-server Surya 2 OCR VLM (ROCm toolbox - datalab surya-ocr-2 650M, PoC/shadow for DocFlow OCR)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/toolbox run -c llama-rocm-7.2.4 \
+  llama-server \
+    -m /home/awpapa/models/surya-2/surya-2.gguf \
+    --mmproj /home/awpapa/models/surya-2/surya-2-mmproj.gguf \
+    -ngl 99 \
+    --no-mmap \
+    --flash-attn on \
+    -c 32768 \
+    --parallel 2 \
+    --jinja \
+    --host 127.0.0.1 \
+    --port 8093 \
+    --temp 0
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
