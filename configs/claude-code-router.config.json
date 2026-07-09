@@ -1,0 +1,39 @@
+{
+  "LOG": false,
+  "API_TIMEOUT_MS": 600000,
+  "HOST": "127.0.0.1",
+  "PORT": 3456,
+  "Providers": [
+    {
+      "name": "local-gemma",
+      "api_base_url": "http://127.0.0.1:8013/v1/chat/completions",
+      "api_key": "sk-local-no-auth-needed",
+      "models": [
+        "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf"
+      ]
+    },
+    {
+      "name": "local-gemma-deep",
+      "api_base_url": "http://127.0.0.1:8001/v1/chat/completions",
+      "api_key": "sk-local-no-auth-needed",
+      "models": [
+        "gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf"
+      ]
+    },
+    {
+      "name": "local-qwen",
+      "api_base_url": "http://127.0.0.1:8001/v1/chat/completions",
+      "api_key": "sk-local-no-auth-needed",
+      "models": [
+        "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+      ]
+    }
+  ],
+  "Router": {
+    "default": "local-qwen,Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+    "background": "local-qwen,Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+    "think": "local-qwen,Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+    "longContext": "local-qwen,Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+    "webSearch": "local-qwen,Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+  }
+}
