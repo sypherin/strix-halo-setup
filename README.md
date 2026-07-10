@@ -8,7 +8,8 @@ Local LLM/VLM + image/video generation + NPU inference for AMD Strix Halo APU (R
 ┌──────────────────────────────────────────────────────────────────┐
 │  GPU (Vulkan RADV + ROCm toolboxes — ~124GiB unified via GTT)   │
 │  ├─ llama-server (Vulkan, llama.cpp)     port 8001               │
-│  │  └─ Gemma 4 26B-A4B-it (UD-Q8_K_XL, 128k ctx, primary)       │
+│  │  └─ Qwen3.6-35B-A3B MTP (UD-Q4_K_XL, 256k ctx, primary)      │
+│  │     Gemma 4 26B-A4B is the switchable alternate (see below)  │
 │  ├─ ComfyUI (ROCm toolbox)             port 7860               │
 │  │  └─ Image/video gen (Wan 2.2, HunyuanVideo, Qwen Image)     │
 │  ├─ llama-vlm-bom (ROCm toolbox)       port 8080               │
@@ -45,9 +46,9 @@ All GPU services run as **systemd user services** with auto-start on boot.
 
 | Component | Version | Notes |
 |-----------|---------|-------|
-| Kernel | 7.1.0-rc4 (vanilla) | COPR `@kernel-vanilla/mainline-wo-mergew` |
-| Mesa | 25.3.6 | Vulkan RADV driver |
-| llama.cpp | 9427 (Vulkan build) | Built from `~/llama-cpp-turboquant` fork (turbo KV cache is CPU-only, not used on Vulkan) |
+| Kernel | 7.1.0-rc7 (vanilla) | COPR `@kernel-vanilla/mainline-wo-mergew` |
+| Mesa | 25.3.6 (Vulkan 1.4.341) | Vulkan RADV driver |
+| llama.cpp | fresh upstream `~/llama.cpp` @ `fb30ba9` (Vulkan build) | Native MTP speculative decoding (`--spec-type draft-mtp`). The old `~/llama-cpp-turboquant` fork is retired for the LLM path. |
 | ROCm | 7.2 (kyuz0 toolbox) | For VLM + ComfyUI containers |
 | XRT | 2.23.0 | NPU runtime, built from `~/xdna-driver` |
 | amdxdna | 2.23.0 (DKMS) | NPU kernel module |
@@ -65,18 +66,62 @@ systemctl --user start llama-server comfyui
 
 For NPU setup, see [NPU Setup](#npu-setup) below.
 
+## Claude Code on local Qwen3.6 (offline, 256k, MTP)
+
+Run the **Claude Code CLI against the local Qwen3.6-35B-A3B** model — fully offline,
+zero API cost, 256k context — for real coding on large codebases. Built + verified
+2026-07-10. Full writeup: [`docs/claude-code-local-qwen3.6-mtp.md`](docs/claude-code-local-qwen3.6-mtp.md).
+
+```bash
+ccr code                     # from any project dir → Claude Code driving local Qwen3.6
+ccr code -p "refactor foo"   # one-shot / headless
+ccr status                   # is the router up?
+ccr restart                  # after any model/config change
+```
+
+```
+Claude Code CLI ──► claude-code-router (ccr, :3456) ──► llama-server (:8001)
+                                                        Qwen3.6-35B-A3B MTP, Vulkan/RADV, 256k
+```
+
+- **Model:** unsloth `Qwen3.6-35B-A3B-MTP-GGUF` (UD-Q4_K_XL, ~22.85 GB) with **native
+  multi-token-prediction** speculative decoding — the MTP layers are grafted into the GGUF.
+- **The MTP win:** `--spec-type draft-mtp` gives **~75–86 t/s** on coding prompts (draft
+  acceptance 65–80%) vs ~61 t/s no-MTP. A classic separate 0.8B draft model *backfired*
+  (~27 t/s, ~20% acceptance) — don't use it. No penalty at 256k (~74–80 t/s).
+- **ccr config:** [`configs/claude-code-router.config.json`](configs/claude-code-router.config.json)
+  (lives at `~/.claude-code-router/config.json`; `ccr restart` after edits).
+
+### Switching the :8001 model (Qwen3.6 ⇄ Gemma)
+
+`:8001` runs one model at a time as a systemd user service. Flip between them with
+[`bin/strix-llm-switch.sh`](bin/strix-llm-switch.sh):
+
+```bash
+~/bin/strix-llm-switch.sh qwen    # → Qwen3.6 MTP  (llama-server.service, the default)
+~/bin/strix-llm-switch.sh gemma   # → Gemma 4 26B-A4B (llama-server-gemma.service)
+```
+
+It writes `~/.config/strix-llm-unit` as the single source of truth so a liveness watchdog
+revives the *currently-selected* unit instead of fighting the swap. Qwen3.6 is hybrid-thinking:
+apps that hit `:8001` directly with a **small `max_tokens`** must send
+`chat_template_kwargs: {"enable_thinking": false}` or the reasoning eats the budget and
+`content` comes back empty — Claude Code sends large budgets, so it's unaffected. Audit
+small-budget callers before swapping Gemma → Qwen3.6.
+
 ## Performance benchmarks
 
 ### LLM inference
 
-**Active primary (2026-05-23): Gemma 4 26B-A4B-it UD-Q8_K_XL** at 128k context.
-Swapped in on 2026-05-08 for the prior Qwen3.6-35B-A3B primary — chosen for
-output quality on the document-extraction + tool-use workloads this box now
-serves. Active parameters/token are slightly higher (~4B vs Qwen's ~3B), so
-raw throughput is modestly lower; benchmarks below quantify the trade.
+**Active primary (2026-07-10): Qwen3.6-35B-A3B UD-Q4_K_XL with native MTP** at 256k
+context, on a fresh upstream llama.cpp Vulkan build. Native multi-token-prediction
+(`--spec-type draft-mtp`) lands **~75–86 t/s** on coding prompts (draft acceptance
+65–80%) — see the [Claude Code section](#claude-code-on-local-qwen36-offline-256k-mtp).
 
-Qwen3.6-35B-A3B and the older Qwen3.5-122B-A10B unit are retained as fallbacks
-(see `systemd/llama-server-qwen36.service` and the legacy table further down).
+**Gemma 4 26B-A4B-it UD-Q8_K_XL** is the switchable alternate (`strix-llm-switch.sh
+gemma`), preferred for the document-extraction + structured-output workloads where its
+decode quality earns the throughput cost. The Qwen3.6-vs-Gemma tables below quantify
+the trade at Q8/128k; the older Qwen3.5-122B-A10B unit is retained as a legacy fallback.
 
 #### Gemma 4 26B-A4B-it UD-Q8_K_XL — kernel 7.0 stable
 
@@ -155,9 +200,11 @@ Kernel 7.0 significantly improves prompt processing via RADV/Vulkan improvements
 
 | Service | Port | Backend | Startup | Description |
 |---------|------|---------|---------|-------------|
-| `llama-server` | 8001 | Vulkan | auto | LLM inference (llama.cpp 8793, Vulkan RADV) |
+| `llama-server` | 8001 | Vulkan | auto | **Primary LLM — Qwen3.6-35B-A3B MTP** (fresh upstream llama.cpp, Vulkan RADV) |
+| `llama-server-gemma` | 8001 | Vulkan | via switch | Alternate LLM — Gemma 4 26B-A4B. Bind-conflicts with `llama-server`; use `strix-llm-switch.sh` to flip |
 | `comfyui` | 7860 | ROCm | auto | Image/video gen (kyuz0 toolbox container) |
 | `llama-vlm-bom` | 8080 | ROCm | auto | Vision LLM (Qwen3-VL-32B, kyuz0 ROCm 7.2 toolbox) |
+| `llama-surya2` | 8093 | ROCm | auto | Surya 2 OCR VLM 650M (DocFlow OCR, prod) |
 | `fastflowlm` | 52625 | NPU | **not running** (binary at /opt/fastflowlm, no systemd unit) | Small model inference (Qwen3.5:4b, Whisper) |
 | `lemonade` | 8000 | Vulkan | manual | Web UI + sd-cpp (optional) |
 
@@ -281,16 +328,14 @@ The NPU (55 TOPS INT8) is best for small always-on models, freeing the GPU for l
 
 ### mmap vs --no-mmap under the GTT regime (updated 2026-06-08)
 
-The old advice here ("--mmap is REQUIRED for Vulkan") dated from the 96GB-VGM-carve era, when Linux only saw ~31GB of RAM and `--no-mmap` would swap-thrash. **That no longer applies.** With the current 1GB carve + 124GiB GTT, model weights live in host RAM either way.
+The old advice here ("--mmap is REQUIRED for Vulkan") dated from the 96GB-VGM-carve era, when Linux only saw ~31GB of RAM and `--no-mmap` would swap-thrash. **That no longer applies.** With the current 1GB carve + 124GiB GTT, model weights live in host RAM either way, so mmap is now a per-unit tuning choice — the two deployed Vulkan LLM units differ deliberately:
 
-The deployed llama-server units now run `--no-mmap` with:
+| Unit | mmap | Env |
+|------|------|-----|
+| `llama-server` (Qwen3.6 MTP, primary) | `--mmap` | `GGML_VK_PREFER_HOST_MEMORY=ON` |
+| `llama-server-gemma` (Gemma 4, alternate) | `--no-mmap` | `GGML_VK_PREFER_HOST_MEMORY=ON`, `RADV_PERFTEST=nogttspill` |
 
-```
-GGML_VK_PREFER_HOST_MEMORY=ON
-RADV_PERFTEST=nogttspill
-```
-
-which loads weights into host memory up front (no first-token page-fault stalls) and lets RADV use the full GTT window. If you change this, benchmark — don't cargo-cult either flag.
+`--no-mmap` loads weights into host memory up front (no first-token page-fault stalls); `--mmap` is fine here too since weights stay resident under the GTT regime. If you change either, benchmark on that specific model — don't cargo-cult the flag across units.
 
 ### --no-mmap is REQUIRED for ROCm (opposite of Vulkan!)
 
@@ -320,15 +365,17 @@ FP8 is a **software limitation** on Strix Halo (RDNA 3.5). Always use BF16 model
 
 | Model | Type | Active Params | Quant | Speed | Use case |
 |-------|------|---------------|-------|-------|----------|
-| **Gemma 4 26B-A4B-it** | MoE | 4B | UD-Q8_K_XL | ~41 t/s gen, ~720 t/s pp | **Default (2026-05-08+)** — extraction quality, structured output, tool use at 128k ctx |
-| Qwen3.6-35B-A3B | MoE | 3B | UD-Q8_K_XL | ~44 t/s gen, ~839 t/s pp | Fallback (2026-04-23+) — faster decode, comparable tool-use |
+| **Qwen3.6-35B-A3B MTP** | MoE | 3B | UD-Q4_K_XL | **~75–86 t/s gen** (native MTP), 256k ctx | **Default (2026-07-10+)** — Claude Code / coding, fast decode via `--spec-type draft-mtp` |
+| Gemma 4 26B-A4B-it | MoE | 4B | UD-Q8_K_XL | ~41 t/s gen, ~720 t/s pp, 128k ctx | Switchable alternate — extraction quality, structured output, tool use |
+| Qwen3.6-35B-A3B (Q8, no MTP) | MoE | 3B | UD-Q8_K_XL | ~44 t/s gen, ~839 t/s pp | Prior primary — higher-fidelity quant without MTP |
 | Qwen3.5-122B-A10B | MoE | 10B | UD-Q4_K_XL | ~22 t/s gen, ~393 t/s pp | Legacy, SOTA quality but slower |
-| Qwen3-30B-A3B | MoE | 3B | — | ~57 t/s | Fast chat / draft |
 
-To switch models, update the `-m` path in `llama-server.service` and restart:
+To flip the live `:8001` model between the Qwen3.6 MTP default and Gemma:
 ```bash
-systemctl --user restart llama-server
+~/bin/strix-llm-switch.sh qwen    # or: gemma
 ```
+To change quant/path, edit the `-m` line in the relevant unit (`llama-server.service` for
+Qwen3.6, `llama-server-gemma.service` for Gemma) and `systemctl --user restart` it.
 
 ### VLM (llama-vlm-bom on port 8080)
 
@@ -349,32 +396,49 @@ Toolbox: `kyuz0/amd-strix-halo-comfyui:latest` (ROCm TheRock nightlies)
 
 ## Building llama.cpp (Vulkan)
 
-Build from source for latest Vulkan backend improvements. We use the turboquant fork (`~/llama-cpp-turboquant`) but the turbo KV cache types are CPU-only — on Vulkan we use q8_0 KV cache instead:
+The LLM path now uses a **fresh upstream `~/llama.cpp`** build (verified @ `fb30ba9`,
+2026-07-09) — it exposes the native MTP flag (`--spec-type draft-mtp`) the Qwen3.6
+primary needs. The old `~/llama-cpp-turboquant` fork is retired for the LLM (its turbo
+KV cache types were CPU-only anyway; on Vulkan we use q8_0 KV cache).
 
 ```bash
-cd ~/llama-cpp-turboquant
-git pull
-mkdir -p build && cd build
-cmake .. -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build . --config Release -j$(nproc)
+git clone --depth 1 https://github.com/ggml-org/llama.cpp ~/llama.cpp
+cd ~/llama.cpp
+cmake -B build -G Ninja -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=ON
+cmake --build build -j16 --target llama-server
 
 # Update service
 systemctl --user restart llama-server
 curl http://localhost:8001/health  # wait for model to load (~35s)
 ```
 
+Build deps: `glslc`, `cmake`, `ninja`, Vulkan headers (mesa 1.4.x). The resulting
+`build/bin/llama-server` finds its `.so`s via rpath — no `LD_LIBRARY_PATH` wrapper needed.
+
 ## Structure
 
 ```
 ├── setup.sh                              # Main setup script
 ├── systemd/
-│   ├── llama-server.service              # LLM server (Vulkan RADV, auto-enabled)
-│   ├── llama-vlm-bom.service             # Vision LLM server (ROCm toolbox, auto-enabled)
+│   ├── llama-server.service              # PRIMARY LLM — Qwen3.6-35B-A3B MTP (Vulkan, auto)
+│   ├── llama-server-gemma.service        # Alternate LLM — Gemma 4 26B-A4B (via switch)
+│   ├── llama-vlm-bom.service             # Vision LLM (Qwen3-VL-32B, ROCm toolbox, auto)
+│   ├── llama-surya2.service              # Surya 2 OCR VLM (DocFlow OCR, ROCm, auto)
 │   ├── comfyui.service                   # ComfyUI (ROCm toolbox, auto-enabled)
 │   └── lemonade.service                  # Lemonade router (optional, disabled by default)
 ├── bin/
 │   ├── llama-server-wrapper.sh           # LD_LIBRARY_PATH wrapper for Vulkan binary
-│   └── sd-server-wrapper.sh              # LD_LIBRARY_PATH wrapper for sd-cpp binary
+│   ├── sd-server-wrapper.sh              # LD_LIBRARY_PATH wrapper for sd-cpp binary
+│   └── strix-llm-switch.sh               # Flip :8001 between Qwen3.6 MTP and Gemma
+├── configs/
+│   └── claude-code-router.config.json    # ccr config → local :8001 (secrets redacted)
+├── docs/
+│   ├── claude-code-local-qwen3.6-mtp.md  # Claude Code on local Qwen3.6 (full writeup)
+│   └── comfyui-qwen-image.md             # Qwen-Image GGUF workflow notes
+├── tools/
+│   └── cc-qwen-vs-opus.sh                # Head-to-head test harness (local Qwen3.6 vs Opus)
+├── workflows/
+│   └── qwen-image-2512-gguf-lightning.json  # ComfyUI image workflow
 ├── patches/
 │   ├── lemonade-provider-reasoning.patch # VS Code extension patches (human-readable)
 │   └── apply-lemonade-patches.sh         # Auto-apply patches
@@ -386,6 +450,8 @@ curl http://localhost:8001/health  # wait for model to load (~35s)
 
 | Component | Version | Date | Notes |
 |-----------|---------|------|-------|
+| llama.cpp | fresh upstream `~/llama.cpp` @ fb30ba9 (Vulkan) | 2026-07-10 | Native MTP (`--spec-type draft-mtp`), Qwen3.6 primary, ~75–86 t/s tg |
+| Qwen3.6-35B-A3B MTP model | unsloth UD-Q4_K_XL (~22.85 GB) | 2026-07-10 | MTP layers grafted into GGUF; 256k ctx |
 | llama.cpp | 8793 (Vulkan build from turboquant fork) | 2026-04-03 | 393 t/s pp, 22 t/s tg |
 | llama-server | b8461 (kyuz0 Vulkan RADV) | 2026-03 | 351 t/s pp, 19 t/s tg (replaced) |
 | llama-server | b8299 (official release) | 2026-03-13 | +40% prompt speed over b8119 |
@@ -399,11 +465,11 @@ curl http://localhost:8001/health  # wait for model to load (~35s)
 ## Troubleshooting
 
 ### System is laggy when model is loaded
-Check if `--no-mmap` is set (it shouldn't be for Vulkan):
+Check the mmap flag on the active unit:
 ```bash
 systemctl --user cat llama-server | grep mmap
 ```
-Must show `--mmap`, not `--no-mmap`. See [critical notes](#--mmap-is-required-for-vulkan-do-not-use---no-mmap).
+The Qwen3.6 primary intentionally runs `--mmap`; the Gemma alternate runs `--no-mmap`. Both are correct under the current GTT regime — see [mmap notes](#mmap-vs---no-mmap-under-the-gtt-regime-updated-2026-06-08). If a unit was hand-edited to the wrong flag for its model, laggy load is the symptom.
 
 ### llama-server fails to start
 ```bash

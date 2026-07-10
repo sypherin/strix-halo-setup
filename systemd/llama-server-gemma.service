@@ -1,0 +1,40 @@
+[Unit]
+Description=llama-server (Vulkan - Strix Halo - Gemma 4 26B-A4B-it UD-Q8_K_XL)
+After=network-online.target
+Wants=network-online.target
+
+# Switchable ALTERNATE for :8001 (as of 2026-07-10 the Qwen3.6-35B-A3B MTP
+# primary in llama-server.service is the default). Only ONE of the two may run
+# at a time — they bind the same port. Flip with bin/strix-llm-switch.sh, which
+# stops+disables the other unit and records the choice in ~/.config/strix-llm-unit.
+# Gemma is preferred for extraction/structured-output consumers (cf-platform
+# model-router, goose local_llama, hermes, altronis chatbot) that want its
+# decode quality and a non-thinking-friendly small-max_tokens path.
+
+[Service]
+Type=simple
+Environment=GGML_VK_PREFER_HOST_MEMORY=ON
+Environment=RADV_PERFTEST=nogttspill
+ExecStart=/home/awpapa/llama-cpp-turboquant/build/bin/llama-server \
+  -m /mnt/Esuna/models/unsloth-gemma-4-26b-a4b/gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf \
+  --ctx-size 131072 \
+  --port 8001 \
+  --host 0.0.0.0 \
+  --no-warmup \
+  -ngl 99 \
+  --no-mmap \
+  --jinja \
+  --ubatch-size 512 \
+  -fa 1 \
+  -ctk q8_0 \
+  -ctv q8_0 \
+  --cache-prompt \
+  --swa-checkpoints 0 \
+  --cache-ram 0 \
+  --reasoning-budget 500 \
+  --reasoning-format auto
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
