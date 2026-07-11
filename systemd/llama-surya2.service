@@ -1,5 +1,5 @@
 [Unit]
-Description=llama-server Surya 2 OCR VLM (ROCm toolbox - datalab surya-ocr-2 650M, PoC/shadow for DocFlow OCR)
+Description=llama-server Surya 2 OCR VLM (ROCm toolbox - datalab surya-ocr-2 650M, PoC/shadow for document OCR)
 After=default.target
 
 [Service]

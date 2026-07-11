@@ -15,7 +15,7 @@ Local LLM/VLM + image/video generation + NPU inference for AMD Strix Halo APU (R
 │  ├─ llama-vlm-bom (ROCm toolbox)       port 8080               │
 │  │  └─ Qwen3-VL-32B (vision/BOM extraction)                    │
 │  ├─ llama-surya2 (ROCm toolbox)        port 8093               │
-│  │  └─ Surya 2 OCR VLM 650M (DocFlow OCR, prod)                │
+│  │  └─ Surya 2 OCR VLM 650M (document OCR, prod)                │
 │  ├─ surya-server (podman, dedicated)   port 8090               │
 │  │  └─ Surya v1 layout+OCR (legacy path)                       │
 │  └─ llama-server-qwen36 (Vulkan)       port 8092 (disabled)    │
@@ -204,7 +204,7 @@ Kernel 7.0 significantly improves prompt processing via RADV/Vulkan improvements
 | `llama-server-gemma` | 8001 | Vulkan | via switch | Alternate LLM — Gemma 4 26B-A4B. Bind-conflicts with `llama-server`; use `strix-llm-switch.sh` to flip |
 | `comfyui` | 7860 | ROCm | auto | Image/video gen (kyuz0 toolbox container) |
 | `llama-vlm-bom` | 8080 | ROCm | auto | Vision LLM (Qwen3-VL-32B, kyuz0 ROCm 7.2 toolbox) |
-| `llama-surya2` | 8093 | ROCm | auto | Surya 2 OCR VLM 650M (DocFlow OCR, prod) |
+| `llama-surya2` | 8093 | ROCm | auto | Surya 2 OCR VLM 650M (document OCR, prod) |
 | `fastflowlm` | 52625 | NPU | **not running** (binary at /opt/fastflowlm, no systemd unit) | Small model inference (Qwen3.5:4b, Whisper) |
 | `lemonade` | 8000 | Vulkan | manual | Web UI + sd-cpp (optional) |
 
@@ -423,7 +423,7 @@ Build deps: `glslc`, `cmake`, `ninja`, Vulkan headers (mesa 1.4.x). The resultin
 │   ├── llama-server.service              # PRIMARY LLM — Qwen3.6-35B-A3B MTP (Vulkan, auto)
 │   ├── llama-server-gemma.service        # Alternate LLM — Gemma 4 26B-A4B (via switch)
 │   ├── llama-vlm-bom.service             # Vision LLM (Qwen3-VL-32B, ROCm toolbox, auto)
-│   ├── llama-surya2.service              # Surya 2 OCR VLM (DocFlow OCR, ROCm, auto)
+│   ├── llama-surya2.service              # Surya 2 OCR VLM (document OCR, ROCm, auto)
 │   ├── comfyui.service                   # ComfyUI (ROCm toolbox, auto-enabled)
 │   └── lemonade.service                  # Lemonade router (optional, disabled by default)
 ├── bin/
