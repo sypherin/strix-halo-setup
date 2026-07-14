@@ -535,3 +535,7 @@ Common causes:
 
 ### ROCm toolbox containers
 All ROCm containers use `HSA_OVERRIDE_GFX_VERSION=11.5.1` internally. If you need to run ROCm commands outside a toolbox, set this env var first.
+
+---
+
+<sub>Notes from running local LLMs on AMD Strix Halo in production. Maintained by Zachary Aw · [altronis.sg](https://altronis.sg) · Singapore. Issues and PRs welcome.</sub>
