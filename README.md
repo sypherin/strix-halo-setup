@@ -113,15 +113,41 @@ small-budget callers before swapping Gemma → Qwen3.6.
 
 ### LLM inference
 
-**Active primary (2026-07-10): Qwen3.6-35B-A3B UD-Q4_K_XL with native MTP** at 256k
-context, on a fresh upstream llama.cpp Vulkan build. Native multi-token-prediction
-(`--spec-type draft-mtp`) lands **~75–86 t/s** on coding prompts (draft acceptance
-65–80%) — see the [Claude Code section](#claude-code-on-local-qwen36-offline-256k-mtp).
+**Both drivers run Q4 with native MTP** (`--spec-type draft-mtp`) on a fresh upstream llama.cpp
+Vulkan build. Numbers are the server's own `timings` on real chat-completion requests (250-word
+generation, warm), i.e. actual end-user throughput including the jinja chat template.
 
-**Gemma 4 26B-A4B-it UD-Q8_K_XL** is the switchable alternate (`strix-llm-switch.sh
-gemma`), preferred for the document-extraction + structured-output workloads where its
-decode quality earns the throughput cost. The Qwen3.6-vs-Gemma tables below quantify
-the trade at Q8/128k; the older Qwen3.5-122B-A10B unit is retained as a legacy fallback.
+| Model | Quant + MTP | Sustained tg | Peak | Draft accept | Role |
+|-------|-------------|:-:|:-:|:-:|------|
+| **Qwen3.6-35B-A3B** (3B active) | UD-Q4_K_XL, MTP n=3, q8_0 KV | **~78 t/s** | 86 | 65-80% | active primary: agent driver + Claude Code coder, 256k ctx |
+| **Gemma-4-26B-A4B** (4B active) | UD-Q4_K_XL, MTP n=3, f16 KV | **~78 t/s** | 82 | 66-71% | switchable: vision-capable, strong extraction/structured-output |
+
+**Optimal MTP settings (tuned 2026-07-14):**
+
+- `--spec-draft-n-max 3` is the sweet spot for both. Going higher (5/6/8) *lowers* throughput: the
+  MTP head's draft acceptance craters past ~3 tokens (n=8 dropped Gemma to ~40 t/s).
+- KV cache: use **`f16` for Gemma MTP** (about 10% over `q8_0`: 82 vs 74 peak). Qwen keeps `q8_0`
+  (its 256k context needs the smaller KV, and f16's gain there is marginal).
+- Always: `-fa 1`, `--ubatch-size 1024`, `-ngl 99`, and `-ngld 99` to offload the draft head too.
+
+Tuned Gemma Q4+MTP launch:
+
+```bash
+llama-server -m gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf \
+  -md mtp-gemma-4-26B-A4B-it.gguf --spec-type draft-mtp --spec-draft-n-max 3 -ngld 99 \
+  -ngl 99 -fa 1 --ubatch-size 1024 -ctk f16 -ctv f16 --parallel 1 --no-warmup --jinja --port 8001
+```
+
+The MTP draft head `mtp-gemma-4-26B-A4B-it.gguf` (~0.46GB) lives *inside* the regular
+`unsloth/gemma-4-26B-A4B-it-GGUF` repo (a separate head file, not a single fused gguf). Load it with
+`--spec-type draft-mtp`; `draft-simple` tries to load the head as a full model and fails with
+"failed to create llama_context".
+
+**Cross-machine (2026-07-14):** against a reported HP Zbook Ultra G1a laptop running the same models
+via Lemonade/Vulkan, this desktop wins both: Gemma-4-26B-A4B MTP **78-82 vs 72**, Qwen3.6-35B-A3B MTP
+**78 vs 65**. For a 4B-active MoE the lever is MTP, not quant (Q4 *non*-MTP was only ~48 t/s; Q4+MTP ~78).
+
+The Q8 / 128k tables below are the earlier (May) baseline, kept for host-config and kernel reference.
 
 #### Gemma 4 26B-A4B-it UD-Q8_K_XL — kernel 7.0 stable
 
@@ -333,7 +359,7 @@ The old advice here ("--mmap is REQUIRED for Vulkan") dated from the 96GB-VGM-ca
 | Unit | mmap | Env |
 |------|------|-----|
 | `llama-server` (Qwen3.6 MTP, primary) | `--mmap` | `GGML_VK_PREFER_HOST_MEMORY=ON` |
-| `llama-server-gemma` (Gemma 4, alternate) | `--no-mmap` | `GGML_VK_PREFER_HOST_MEMORY=ON`, `RADV_PERFTEST=nogttspill` |
+| `llama-server-gemma` (Gemma 4 Q4+MTP, alternate) | `--mmap` | `GGML_VK_PREFER_HOST_MEMORY=ON`, `RADV_PERFTEST=nogttspill` |
 
 `--no-mmap` loads weights into host memory up front (no first-token page-fault stalls); `--mmap` is fine here too since weights stay resident under the GTT regime. If you change either, benchmark on that specific model — don't cargo-cult the flag across units.
 
@@ -366,7 +392,7 @@ FP8 is a **software limitation** on Strix Halo (RDNA 3.5). Always use BF16 model
 | Model | Type | Active Params | Quant | Speed | Use case |
 |-------|------|---------------|-------|-------|----------|
 | **Qwen3.6-35B-A3B MTP** | MoE | 3B | UD-Q4_K_XL | **~75–86 t/s gen** (native MTP), 256k ctx | **Default (2026-07-10+)** — Claude Code / coding, fast decode via `--spec-type draft-mtp` |
-| Gemma 4 26B-A4B-it | MoE | 4B | UD-Q8_K_XL | ~41 t/s gen, ~720 t/s pp, 128k ctx | Switchable alternate — extraction quality, structured output, tool use |
+| Gemma 4 26B-A4B-it | MoE | 4B | UD-Q4_K_XL + MTP | **~78 t/s gen** (draft-mtp n=3, f16 KV peak 82), 128k ctx | Switchable alternate: vision, extraction quality, structured output, tool use |
 | Qwen3.6-35B-A3B (Q8, no MTP) | MoE | 3B | UD-Q8_K_XL | ~44 t/s gen, ~839 t/s pp | Prior primary — higher-fidelity quant without MTP |
 | Qwen3.5-122B-A10B | MoE | 10B | UD-Q4_K_XL | ~22 t/s gen, ~393 t/s pp | Legacy, SOTA quality but slower |
 

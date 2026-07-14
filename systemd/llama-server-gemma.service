@@ -1,36 +1,43 @@
 [Unit]
-Description=llama-server (Vulkan - Strix Halo - Gemma 4 26B-A4B-it UD-Q8_K_XL)
+Description=llama-server (Vulkan - Strix Halo - Gemma 4 26B-A4B-it Q4 + native MTP)
 After=network-online.target
 Wants=network-online.target
 
 # Switchable ALTERNATE for :8001 (as of 2026-07-10 the Qwen3.6-35B-A3B MTP
 # primary in llama-server.service is the default). Only ONE of the two may run
-# at a time — they bind the same port. Flip with bin/strix-llm-switch.sh, which
+# at a time (they bind the same port). Flip with bin/strix-llm-switch.sh, which
 # stops+disables the other unit and records the choice in ~/.config/strix-llm-unit.
-# Gemma is preferred for extraction/structured-output consumers (cf-platform
-# model-router, goose local_llama, hermes, altronis chatbot) that want its
-# decode quality and a non-thinking-friendly small-max_tokens path.
+#
+# 2026-07-14: switched to Q4_K_XL + native MTP on the FRESH upstream llama.cpp
+# (same binary as the Qwen unit). MTP head lives inside unsloth/gemma-4-26B-A4B-it-GGUF
+# as a separate file, loaded with --spec-type draft-mtp. Benched ~74 t/s at q8_0 KV /
+# 128k ctx (this config), ~82 t/s peak with f16 KV at a smaller ctx. See README
+# "LLM inference" for the tuning sweep. Use this unit for the Gemma-vs-Qwen A/B on
+# real agent loops (monologue incidence + tool-call success), not just tok/s.
 
 [Service]
 Type=simple
 Environment=GGML_VK_PREFER_HOST_MEMORY=ON
 Environment=RADV_PERFTEST=nogttspill
-ExecStart=/home/awpapa/llama-cpp-turboquant/build/bin/llama-server \
-  -m /mnt/Esuna/models/unsloth-gemma-4-26b-a4b/gemma-4-26B-A4B-it-UD-Q8_K_XL.gguf \
+ExecStart=/home/awpapa/llama.cpp/build/bin/llama-server \
+  -m /home/awpapa/models/gemma-4-q4/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf \
+  -md /home/awpapa/models/gemma-4-q4/mtp-gemma-4-26B-A4B-it.gguf \
+  --spec-type draft-mtp \
+  --spec-draft-n-max 3 \
+  -ngld 99 \
   --ctx-size 131072 \
   --port 8001 \
   --host 0.0.0.0 \
   --no-warmup \
   -ngl 99 \
-  --no-mmap \
+  --mmap \
   --jinja \
-  --ubatch-size 512 \
+  --ubatch-size 1024 \
   -fa 1 \
   -ctk q8_0 \
   -ctv q8_0 \
   --cache-prompt \
   --swa-checkpoints 0 \
-  --cache-ram 0 \
   --reasoning-budget 500 \
   --reasoning-format auto
 Restart=on-failure
