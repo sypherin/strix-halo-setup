@@ -12,17 +12,44 @@
 # ============================================================================
 set -uo pipefail
 
-BASE="$HOME/cc-headtohead"
+BASE="$HOME/cc-headtohead-thorough"
 QDIR="$BASE/qwen"; ODIR="$BASE/opus"
 mkdir -p "$QDIR" "$ODIR"
 
-# ---- the task both models must complete ------------------------------------
+# ---- the task both models must complete (THOROUGH / GSD-style spec) ---------
+# This version externalises the senior-engineer judgment (validation, timeouts,
+# edge cases, end-to-end verify) that a strong model does unprompted but a
+# weaker one needs told. Point: show how much the harness/spec closes the gap.
 read -r -d '' TASK <<'EOF'
-Build a service-liveness watchdog CLI in Python from scratch in the current directory. Requirements:
-1. config.json listing services, each with: name, health_url, fail_threshold, restart_cmd.
-2. watchdog.py that: probes each service's health_url; tracks CONSECUTIVE failures per service (reset to 0 on a success); when a service's failures reach fail_threshold, runs its restart_cmd via subprocess (skip the actual run when --dry-run is passed, just log it); enforces a cooldown so the same service is not restarted twice within 60 seconds; has a --once mode that does exactly one probe pass then exits; uses structured logging.
-3. test_watchdog.py: a pytest suite that MOCKS the probe function (no real network) covering: consecutive-failure counting, success resetting the counter, threshold triggering a restart, and cooldown preventing a second restart.
-After writing the code, run `python -m pytest -q` and fix any failures until ALL tests pass. Report what you built and the final test result.
+Build a PRODUCTION-QUALITY service-liveness watchdog CLI in Python from scratch in the current directory. Treat this as code that will run unattended against real services — robustness matters as much as passing tests.
+
+FUNCTIONAL REQUIREMENTS
+1. config.json listing services, each with: name, health_url, fail_threshold (positive int), restart_cmd (a string OR a list of args).
+2. watchdog.py that:
+   - probes each service's health_url with a BOUNDED timeout (must never hang on a dead/slow endpoint)
+   - tracks CONSECUTIVE failures per service (reset to 0 on a success)
+   - when consecutive failures reach fail_threshold, runs restart_cmd via subprocess (accept restart_cmd as EITHER a string or an arg list); with --dry-run, do NOT actually run it, just log the intended action
+   - enforces a cooldown so the same service is not restarted twice within 60 seconds
+   - has a --once mode (one probe pass then exit) plus a continuous mode
+   - uses STRUCTURED logging (JSON lines: timestamp, service, event, level)
+
+ROBUSTNESS REQUIREMENTS (do NOT skip)
+   - VALIDATE config on load: raise a clear, specific error if a service is missing a required field, fail_threshold is not a positive int, or restart_cmd is the wrong type. Never crash with a raw KeyError/IndexError on bad input.
+   - handle subprocess failures gracefully (non-zero exit, command-not-found, timeout) — log and continue, never crash the whole watchdog
+   - treat a probe that raises ANY exception (not just one library's error type) as a failure
+
+TESTS (test_watchdog.py, pytest, MOCK all probes + subprocess — no real network or process spawn). Must cover:
+   - consecutive-failure counting + success resetting the counter
+   - threshold triggering a restart, and cooldown preventing a second restart within the window
+   - --dry-run does NOT spawn a subprocess; live mode DOES
+   - restart_cmd given as a STRING and as a LIST both work
+   - INVALID config (missing field / wrong type / non-positive threshold) raises the expected error
+   - a probe raising an unexpected exception is counted as a failure
+
+DONE CRITERIA (all required)
+   - run `python -m pytest -q` and fix until ALL tests pass
+   - THEN exercise the real CLI end-to-end: run `python watchdog.py --once --dry-run` against config.json and confirm it loads, probes, and logs without error
+   - report what you built, the final test count, and the CLI run output
 EOF
 
 echo "== preflight =="

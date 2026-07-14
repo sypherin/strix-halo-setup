@@ -128,3 +128,37 @@ Qwen3.6 is **hybrid-thinking**. With `--reasoning-format auto` the reasoning goe
 - `bin/strix-llm-switch.sh` — model toggle via `~/.config/strix-llm-unit`.
 - `configs/claude-code-router.config.json` — ccr config (secrets redacted).
 - `tools/cc-qwen-vs-opus.sh` — head-to-head test harness (local Qwen3.6 vs Opus).
+
+## Reasoning budget — how deeply it thinks (updated 2026-07-11)
+
+Qwen3.6 is hybrid-thinking: it can emit a hidden `<think>…</think>` block before answering.
+Whether it thinks, and **how long**, is decided per request — not a fixed model property.
+
+**Two switches:**
+- `chat_template_kwargs: {"enable_thinking": true/false}` — the API field (what direct callers set).
+- `/think` or `/no_think` **in the message text** — Qwen's soft switch; works through `--jinja`.
+  This is how you get reasoning in **ccr**: ccr forwards your message untouched, so just type
+  `/think` in your prompt (there's no way to set the API field through ccr). `/no_think` disables it.
+
+**How MUCH it thinks = `--reasoning-budget` (server launch flag):**
+- Values: `-1` = unlimited · `0` = thinking off · `N` = an N-token cap on reasoning.
+- **We now run `4096` (was `500`).** Set in `systemd/llama-server.service`; change it there +
+  `systemctl --user restart llama-server.service`.
+- ⚠ **Per-request budget is NOT honored on this llama.cpp build** — tested `reasoning_budget: 50`
+  in the request body, still got ~384 reasoning tokens. So the global flag is the only knob.
+
+**Why 4096 (not 500):** 500 was starving debugging — the model reasoned only ~420 tokens and hit
+the cap. Empirically (2026-07-11): asked to self-debug a 3D three.js build from its own error
+messages, at **budget 500 + single-shot it thrashed** (rewrote the whole file 3× and never fixed a
+one-line bug); at **budget 4096 + an agentic loop it self-fixed to zero errors in 2 rounds**, using
+~2,800 reasoning tokens per round. 4096 is also the Qwen3.6-MTP reasoning-eval sweet spot for
+coding/debug (range 4k–8k); small-active models (this is 3B-active) benefit most from more budget.
+
+**Does raising it slow everything? No.** The budget is a *cap, not a floor* — a request only reasons
+as long as it needs. Requests with thinking **off** are unaffected — and **neo/deneb sends
+`enable_thinking:false`** (see `~/neo-assistant/src/llm.py`), so it does zero thinking and the bigger
+budget can't touch it. Only requests that opt into thinking (ccr `/think`, extraction pipelines)
+reason deeper and thus take more wall-clock; per-token speed (~85 t/s) is unchanged.
+
+Refs: Qwen3 thinking-budget docs · Qwen3.6-MTP-pi-reasoning (4096/8192) · llama.cpp
+`common/reasoning-budget.cpp` · thinking-mode-pitfalls-in-agentic-workflows.

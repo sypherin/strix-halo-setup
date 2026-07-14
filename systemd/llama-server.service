@@ -22,7 +22,7 @@ ExecStart=/home/awpapa/llama.cpp/build/bin/llama-server \
   -ctk q8_0 \
   -ctv q8_0 \
   --cache-prompt \
-  --reasoning-budget 500 \
+  --reasoning-budget 4096 \
   --reasoning-format auto
 Restart=on-failure
 RestartSec=10
