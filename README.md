@@ -119,7 +119,8 @@ generation, warm), i.e. actual end-user throughput including the jinja chat temp
 
 | Model | Quant + MTP | Sustained tg | Peak | Draft accept | Role |
 |-------|-------------|:-:|:-:|:-:|------|
-| **Qwen3.6-35B-A3B** (3B active) | UD-Q4_K_XL, MTP n=3, q8_0 KV | **~78 t/s** | 86 | 65-80% | active primary: agent driver + Claude Code coder, 256k ctx |
+| **Qwen3.6-35B-A3B** (3B active) | UD-Q4_K_XL, MTP n=3, q8_0 KV | **~78 t/s** | 86 | 65-80% | MoE; instant revert target (`strix-llm-switch qwen`), 256k ctx |
+| **Qwen3.6-27B** (DENSE, 27B active) | UD-Q4_K_XL, MTP n=5, q8_0 KV | **~77 t/s** ⚠ | 80 | 60-67% | **EXPERIMENTAL default 2026-07-15**: dense, vision, stronger coder, 256k ctx |
 | **Gemma-4-26B-A4B** (4B active) | UD-Q4_K_XL, MTP n=3, f16 KV | **~78 t/s** | 82 | 66-71% | switchable: vision-capable, strong extraction/structured-output |
 
 **Optimal MTP settings (tuned 2026-07-14):**
@@ -146,6 +147,24 @@ The MTP draft head `mtp-gemma-4-26B-A4B-it.gguf` (~0.46GB) lives *inside* the re
 **Cross-machine (2026-07-14):** against a reported HP Zbook Ultra G1a laptop running the same models
 via Lemonade/Vulkan, this desktop wins both: Gemma-4-26B-A4B MTP **78-82 vs 72**, Qwen3.6-35B-A3B MTP
 **78 vs 65**. For a 4B-active MoE the lever is MTP, not quant (Q4 *non*-MTP was only ~48 t/s; Q4+MTP ~78).
+
+**⚠ Qwen3.6-27B DENSE + MTP (EXPERIMENTAL, still under testing 2026-07-15).** The dense 27B is
+bandwidth-bound at **~12 t/s non-MTP**, but its built-in MTP head batches the drafted tokens into one
+verify pass and amortises the heavy weight-read, giving **~77 t/s at 256k** (n=5, q8_0 KV), matching
+the MoE. MTP is lossless (main model verifies every token). It is vision-capable (ships an mmproj) and
+a stronger coder (~77% SWE-bench). Passed a smoke test (256k load, coherent, clean tool call). Now the
+default :8001 driver on a trial basis; revert instantly with `strix-llm-switch.sh qwen`.
+
+Launch (see `systemd/llama-server-qwen27b.service`):
+```bash
+llama-server -m Qwen3.6-27B-UD-Q4_K_XL.gguf --spec-type draft-mtp --spec-draft-n-max 5 -ngld 99 \
+  --ctx-size 262144 -ngl 99 -fa 1 --ubatch-size 1024 -ctk q8_0 -ctv q8_0 --parallel 1 --port 8001
+```
+⚠**Gotcha (cost me an hour):** do NOT add `--reasoning-budget/--reasoning-format` to the 27B unit. At
+256k they tank MTP throughput to **~22 t/s** (draft acceptance collapses); each flag alone is fine, the
+256k+both combo is the killer. `enable_thinking:false` per request handles thinking suppression. The
+27B-MTP gguf (single file, embedded head) is `unsloth/Qwen3.6-27B-MTP-GGUF`. **Still validating**: watch
+for monologuing / degraded tool-following in real agent loops before trusting it over the 35B MoE.
 
 The Q8 / 128k tables below are the earlier (May) baseline, kept for host-config and kernel reference.
 

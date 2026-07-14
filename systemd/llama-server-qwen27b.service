@@ -1,0 +1,40 @@
+[Unit]
+Description=llama-server (Vulkan - Strix Halo - Qwen 3.6 27B DENSE + native MTP)
+After=network-online.target
+Wants=network-online.target
+
+# :8001 driver option (default 2026-07-15). Qwen3.6-27B is DENSE (all 27B active/token)
+# and vision-capable. Non-MTP it is bandwidth-bound at ~12 t/s, but its BUILT-IN MTP head
+# (--spec-type draft-mtp) batches the drafted tokens into one verify pass, which amortises
+# the heavy dense weight-read: ~78 t/s (n=5, q8_0 KV), matching the 35B-A3B MoE, and MTP is
+# lossless (main model verifies every token). Switch via bin/strix-llm-switch.sh; revert
+# instantly with `strix-llm-switch.sh qwen` (the 35B-A3B MoE).
+
+[Service]
+Type=simple
+Environment=GGML_VK_PREFER_HOST_MEMORY=ON
+ExecStart=/home/awpapa/llama.cpp/build/bin/llama-server \
+  -m /home/awpapa/models/qwen3.6-27b-mtp/Qwen3.6-27B-UD-Q4_K_XL.gguf \
+  --spec-type draft-mtp \
+  --spec-draft-n-max 5 \
+  --ctx-size 262144 \
+  --parallel 1 \
+  --port 8001 \
+  --host 0.0.0.0 \
+  --no-warmup \
+  -ngl 99 \
+  --mmap \
+  --jinja \
+  --ubatch-size 1024 \
+  -fa 1 \
+  -ctk q8_0 \
+  -ctv q8_0 \
+  --cache-prompt
+# NOTE: NO --reasoning-budget/--reasoning-format here. On the 27B those flags tank
+# MTP throughput at 256k ctx (22 t/s vs ~70 without them). enable_thinking:false per
+# request handles thinking suppression.
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
