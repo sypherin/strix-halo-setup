@@ -119,8 +119,8 @@ generation, warm), i.e. actual end-user throughput including the jinja chat temp
 
 | Model | Quant + MTP | Sustained tg | Peak | Draft accept | Role |
 |-------|-------------|:-:|:-:|:-:|------|
-| **Qwen3.6-35B-A3B** (3B active) | UD-Q4_K_XL, MTP n=3, q8_0 KV | **~78 t/s** | 86 | 65-80% | **PRIMARY :8001 driver** (`strix-llm-switch qwen`) — MoE, proven agent driver, 256k ctx |
-| Qwen3.6-27B (DENSE, 27B active) | UD-Q4_K_XL, MTP n=5, q8_0 KV | **~77 t/s** ⚠ | 80 | 60-67% | experimental *alternate* (not default): dense, vision, stronger coder, 256k ctx |
+| **Qwen3.6-35B-A3B** (3B active) | UD-Q4_K_XL, MTP n=3, q8_0 KV | **~66-78 t/s** | 86 | 44-80% | **PRIMARY :8001 driver** (`strix-llm-switch qwen`) — MoE, proven agent driver, 256k ctx. ~66 on general text, up to ~78 on code (higher accept) |
+| Qwen3.6-27B (DENSE, 27B active) | UD-Q4_K_XL, MTP n=5, q8_0 KV | **~20-22 t/s** | 25 | 30-58% | experimental *alternate* (not default): dense, vision, stronger coder, 256k ctx. MTP only ~1.7x here (dense) |
 | **Gemma-4-26B-A4B** (4B active) | UD-Q4_K_XL, MTP n=3, f16 KV | **~78 t/s** | 82 | 66-71% | switchable: vision-capable, strong extraction/structured-output |
 
 **Optimal MTP settings (tuned 2026-07-14):**
@@ -150,23 +150,30 @@ via Lemonade/Vulkan, this desktop wins both: Gemma-4-26B-A4B MTP **78-82 vs 72**
 
 **⚠ Qwen3.6-27B DENSE + MTP (EXPERIMENTAL ALTERNATE — not the default).** The primary :8001 driver is
 the Qwen3.6-35B-A3B MoE above; the 27B is a documented option you can flip to, not the standing driver.
-The dense 27B is bandwidth-bound at **~12 t/s non-MTP**, but its built-in MTP head batches the drafted
-tokens into one verify pass and amortises the heavy weight-read, giving **~77 t/s at 256k** (n=5, q8_0
-KV), matching the MoE. MTP is lossless (main model verifies every token). It is vision-capable (ships an
-mmproj) and a stronger coder (~77% SWE-bench). Passed a smoke test (256k load, coherent, clean tool
-call), but the 35B MoE stays the driver for agentic use until the 27B is proven in real agent loops.
-Flip to it with `strix-llm-switch.sh qwen27`; revert to the 35B with `strix-llm-switch.sh qwen`.
+The dense 27B is bandwidth-bound at **~12 t/s non-MTP** (it reads all 17.9 GB of Q4 weights per token
+against ~256 GB/s), and its built-in MTP head only lifts it to **~20-22 t/s** at 256k (measured across 9
+runs, draft acceptance ~30-58%). That is about **1.7x**, NOT the ~6x a MoE gets. On a dense model MTP is
+hard-capped at (draft_len + 1) x the base rate, and acceptance is low, so a dense 27B simply cannot reach
+MoE-class throughput on this box. **Correction:** an earlier revision of this file listed the 27B at
+~77 t/s; that figure was the 35B-A3B MoE mislabeled during a messy benchmarking session (the MoE has only
+3B active per token, so its base rate is far higher). It is corrected here after a clean re-bench, with
+thanks to the r/LocalLLaMA reader who flagged it. MTP is still lossless (the main model verifies every
+token). The 27B is vision-capable (ships an mmproj) and a stronger coder, so it can be worth the flip if
+you want vision + coding and can live with ~20 t/s. Flip to it with `strix-llm-switch.sh qwen27`; revert
+to the 35B with `strix-llm-switch.sh qwen`.
 
 Launch (see `systemd/llama-server-qwen27b.service`):
 ```bash
 llama-server -m Qwen3.6-27B-UD-Q4_K_XL.gguf --spec-type draft-mtp --spec-draft-n-max 5 -ngld 99 \
   --ctx-size 262144 -ngl 99 -fa 1 --ubatch-size 1024 -ctk q8_0 -ctv q8_0 --parallel 1 --port 8001
 ```
-**Note:** do NOT add `--reasoning-budget/--reasoning-format` to the 27B unit. At
-256k they tank MTP throughput to **~22 t/s** (draft acceptance collapses); each flag alone is fine, the
-256k+both combo is the killer. `enable_thinking:false` per request handles thinking suppression. The
-27B-MTP gguf (single file, embedded head) is `unsloth/Qwen3.6-27B-MTP-GGUF`. **Still validating**: watch
-for monologuing / degraded tool-following in real agent loops before trusting it over the 35B MoE.
+**Note:** keep `--reasoning-budget/--reasoning-format` off the 27B unit and suppress thinking with
+`enable_thinking:false` per request; letting a slow model think just burns the token budget.
+(A previous version of this note claimed those flags "tanked" the 27B from ~77 to ~22 t/s. That was the
+same 35B-vs-27B mixup as above, not a real reasoning-flag effect: the dense 27B runs ~20-22 t/s either
+way.) The 27B-MTP gguf (single file, embedded head) is `unsloth/Qwen3.6-27B-MTP-GGUF`. **Still
+validating**: watch for monologuing / degraded tool-following in real agent loops before trusting it
+over the 35B MoE.
 
 The Q8 / 128k tables below are the earlier (May) baseline, kept for host-config and kernel reference.
 

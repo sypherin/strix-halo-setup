@@ -7,7 +7,8 @@ Wants=network-online.target
 # llama-server.service is the primary driver). Qwen3.6-27B is DENSE (all 27B active/token)
 # and vision-capable. Non-MTP it is bandwidth-bound at ~12 t/s, but its BUILT-IN MTP head
 # (--spec-type draft-mtp) batches the drafted tokens into one verify pass, which amortises
-# the heavy dense weight-read: ~78 t/s (n=5, q8_0 KV), matching the 35B-A3B MoE, and MTP is
+# the heavy dense weight-read, but only to ~20-22 t/s (measured n=9; ~1.7x, NOT matching the
+# MoE - an earlier ~78 here was the 35B-A3B mislabeled). MTP is still
 # lossless (main model verifies every token). Switch via bin/strix-llm-switch.sh; revert
 # instantly with `strix-llm-switch.sh qwen` (the 35B-A3B MoE).
 

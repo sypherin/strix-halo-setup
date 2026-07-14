@@ -4,7 +4,7 @@
 #
 # All are systemd --user services that bind :8001 (only one runs at a time):
 #   qwen   -> llama-server.service          (Qwen3.6-35B-A3B MoE, 3B active, ~78 t/s) [PRIMARY DRIVER]
-#   qwen27 -> llama-server-qwen27b.service  (Qwen3.6-27B DENSE + MTP, vision, ~78 t/s) [experimental alternate, not default]
+#   qwen27 -> llama-server-qwen27b.service  (Qwen3.6-27B DENSE + MTP, vision, ~20-22 t/s) [experimental alternate, not default]
 #   gemma  -> llama-server-gemma.service    (Gemma-4-26B-A4B MoE + MTP, vision)
 # The cf-strix-watchdog reads ~/.config/strix-llm-unit to know which one to
 # revive on a :8001 wedge, so flipping is a single source of truth.
