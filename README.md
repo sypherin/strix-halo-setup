@@ -22,8 +22,8 @@ Local LLM/VLM + image/video generation + NPU inference for AMD Strix Halo APU (R
 │     └─ Qwen3.6-27B Q4 + mmproj (single-pass DO extract)        │
 │                                                                  │
 │  NPU (XDNA2 — 51 TOPS, 47μs latency)                           │
-│  └─ FastFlowLM (installed, NOT running) port 52625              │
-│     └─ Small models: Whisper, embeddings, Qwen3.5:4b            │
+│  └─ FastFlowLM RUNNING (flm-asr.service) port 52625            │
+│     └─ Whisper STT for Jarvis (off CPU) + small LLMs           │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -259,7 +259,7 @@ Kernel 7.0 significantly improves prompt processing via RADV/Vulkan improvements
 | `comfyui` | 7860 | ROCm | auto | Image/video gen (kyuz0 toolbox container) |
 | `llama-vlm-bom` | 8080 | ROCm | auto | Vision LLM (Qwen3-VL-32B, kyuz0 ROCm 7.2 toolbox) |
 | `llama-surya2` | 8093 | ROCm | auto | Surya 2 OCR VLM 650M (document OCR, prod) |
-| `fastflowlm` | 52625 | NPU | **not running** (binary at /opt/fastflowlm, no systemd unit) | Small model inference (Qwen3.5:4b, Whisper) |
+| `flm-asr` | 52625 | NPU | **running** (`flm-asr.service`) | Whisper STT for the Jarvis voice assistant (offloaded from CPU) + small LLMs |
 | `lemonade` | 8000 | Vulkan | manual | Web UI + sd-cpp (optional) |
 
 ### Managing services
@@ -370,13 +370,22 @@ Test 3: throughput  → FAILED (runlist abort — known issue, non-critical)
 
 ### NPU use cases
 
-The NPU (55 TOPS INT8) is best for small always-on models, freeing the GPU for large models:
+The NPU (XDNA2, ~50 TOPS INT8) is best for small always-on models, freeing the GPU for large models:
 
-| Use Case | Tool | Performance |
-|----------|------|-------------|
-| Small LLM (1-4B) | FastFlowLM | 28-89 tok/s |
-| Speech recognition | Whisper (via Lemonade) | Real-time |
-| Embeddings | ONNX models | Low latency |
+| Use Case | Tool | Status |
+|----------|------|--------|
+| **Voice assistant STT (Jarvis)** | FastFlowLM `whisper-v3:turbo` (`flm-asr.service`) | **LIVE — ~6x realtime, off the CPU** |
+| Small LLM (1-4B) | FastFlowLM (`flm serve <model>`) | 28-89 tok/s |
+| Embeddings | `embed-gemma:300m` via flm | Low latency |
+
+#### Implemented: Jarvis STT on the NPU (2026-07-21)
+
+The "Hey Jarvis" assistant's Whisper STT runs on the NPU instead of the CPU, freeing the CPU that the `:8001` MTP draft-verify contends for. Wake-word (openWakeWord) and Piper TTS stay on the CPU — both are tiny with no NPU path.
+
+- **NPU endpoint:** `flm serve lfm2:2.6b --asr 1` exposes an OpenAI-compatible `POST /v1/audio/transcriptions` on `:52625`, backed by `whisper-v3:turbo` on the NPU. Persisted as `flm-asr.service` (see `systemd/`).
+  - Gotcha: do **NOT** set `FLM_CONFIG_PATH` to the `~/.config/flm` dir — flm reads it as a model-list *file* and crashes (`basic_filebuf::underflow ... Is a directory`). Leave it unset (flm finds `~/.config/flm/models` from `$HOME`); the service just sources `/opt/xilinx/xrt/setup.sh` for the XRT libs.
+- **Assistant wiring:** `~/bin/voice-assistant/assistant.py` `transcribe()` posts the recorded-command WAV to the NPU endpoint when `config.json` has `"stt_backend": "npu"` (+ `"npu_stt_url"`). Default `"cpu"` keeps the openai-whisper path — fully revertible by flipping that one key.
+- **Not movable:** MTP/speculative decoding stays GPU-only (integrated MTP heads = no separable draft; a cross-hardware NPU draft would add per-step latency that eats the speedup).
 
 ## Critical configuration notes
 
