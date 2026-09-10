@@ -12,6 +12,7 @@ Local LLM/VLM + image/video generation (+ NPU inference, currently disabled by `
 - [Claude Code on local Qwen3.6 (offline, 256k, MTP)](#claude-code-on-local-qwen36-offline-256k-mtp)
 - [vLLM on gfx1151 — many-user serving](#vllm-on-gfx1151--many-user-serving)
 - [Performance benchmarks](#performance-benchmarks)
+- [Benchmarks on TokenMark](#benchmarks-on-tokenmark)
 - [Services](#services)
 - [Kernel boot parameters](#kernel-boot-parameters)
 - [Containers (toolboxes)](#containers-toolboxes)
@@ -359,6 +360,16 @@ validating**: watch for monologuing / degraded tool-following in real agent loop
 over the 35B MoE.
 
 > Earlier (May) baseline benchmark tables, the kernel comparison, and the optimization-history table have moved to [docs/benchmarks-history.md](docs/benchmarks-history.md).
+
+## Benchmarks on TokenMark
+
+The single-stream numbers in this repo are tracked on [TokenMark](https://tokenmark.app), a daily-updated, source-linked reference for how local LLMs run on big-memory machines: AMD Strix Halo, NVIDIA DGX Spark and Apple M-series. Every row links to where it was measured and carries a trust tier, so a config here can be compared against the same model on other hardware.
+
+- Strix Halo configs: <https://tokenmark.app/hardware/strix-halo>
+- Ask it what to run on a given box: <https://tokenmark.app/api/recommend?hardware=Strix+Halo&tasks=coding>
+- This repo is one of the tracked sources. Submit your own README numbers at <https://tokenmark.app/submit>
+
+TokenMark is built by [Altronis](https://altronis.sg), private on-prem AI in Singapore.
 
 ## Services
 _Latest content date: 2026-08-21_
@@ -728,4 +739,4 @@ All ROCm containers use `HSA_OVERRIDE_GFX_VERSION=11.5.1` internally. If you nee
 
 ---
 
-<sub>Notes from running local LLMs on AMD Strix Halo in production. Maintained by Zachary Aw · [altronis.sg](https://altronis.sg) · Singapore. Issues and PRs welcome.</sub>
+<sub>Notes from running local LLMs on AMD Strix Halo in production. Maintained by Zachary Aw · [altronis.sg](https://altronis.sg) · Singapore. Benchmarks tracked on [TokenMark](https://tokenmark.app). Issues and PRs welcome.</sub>
