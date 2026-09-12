@@ -268,6 +268,8 @@ desktop-class box. Full writeup: [`docs/vllm-gfx1151.md`](docs/vllm-gfx1151.md).
 
 **Muse-Glimmer-30B (vision, 30B):** ~26.5 t/s on a custom ROCm-FP4 build; FP4-on-ROCm beats Q4_K-on-Vulkan (bandwidth-bound). Full writeup: [`docs/muse-glimmer-30b-strix.md`](docs/muse-glimmer-30b-strix.md).
 
+**Qwen3.8-Flash-Next (125B-A6B MoE + ~51B engram):** run in RAM mode (`-lm none`), `--parallel 1`, UD-IQ4_XS, ~28 t/s warm on the EngramHalo build. The SSD lazy-read path (`-lm mmap --lazy-mode on`) segfaults under memory pressure and `--parallel > 1` is unvalidated for this model. Full writeup: [`docs/qwen3.8-flash-next-engramhalo-stability.md`](docs/qwen3.8-flash-next-engramhalo-stability.md).
+
 ```bash
 bin/vllm-serve-strix.sh                 # defaults: AWQ 27B, :8107, eager, max_num_seqs 256
 MEM_FRAC=0.5 PORT=8107 bin/vllm-serve-strix.sh /path/to/hf-model
