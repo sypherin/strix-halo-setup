@@ -120,6 +120,7 @@ llama-server -m DeepSeek-V4-Flash-0731-UD-IQ2_XXS-00001-of-00003.gguf \
 ```
 
 ## Claude Code on local Qwen3.6 (offline, 256k, MTP)
+> ⚠ **Historical (pre-Flash-Next).** :8001 now serves **Qwen3.8-Flash-Next**; this section documents the earlier Qwen3.6-35B Claude Code setup.
 _Latest content date: 2026-08-23_
 
 Run the **Claude Code CLI against the local Qwen3.6-35B-A3B** model — fully offline,
@@ -176,6 +177,7 @@ thinking was on by default and every small-`max_tokens` caller had to remember t
 empty — off-by-default turned a recurring caller-side foot-gun into an explicit opt-in.
 
 ### The second resident — Qwen3.8-27B VL on :8022 (and the Glimmer story)
+> ⚠ **Historical (pre-Flash-Next).** :8022 now serves **Qwen3.8-Flash-Next** (reasoning on + vision); this documents the earlier 27B / Muse-Glimmer residents.
 
 Since 2026-08-08 the box keeps a **second model resident** alongside the :8001 primary,
 for vision + writing work (our 35B-A3B unit runs text-only, no mmproj loaded). Two models held that seat:
@@ -224,6 +226,7 @@ for vision + writing work (our 35B-A3B unit runs text-only, no mmproj loaded). T
   > sane default for that, so the likely fix is to make the unit say 0.3 / 0.)
 
 ### Decode-speed ceiling for dense 27B Q8 on gfx1151
+> ⚠ **Historical (pre-Flash-Next).** Analysis of the earlier dense-27B option, retained as a record.
 
 **~17 t/s is the proven fastest a dense ~27B model at Q8 will decode on Strix Halo — with
 the standard full model, on the optimal backend, with speculation already on.** This is a
@@ -296,6 +299,7 @@ MEM_FRAC=0.5 PORT=8107 bin/vllm-serve-strix.sh /path/to/hf-model
   (`CC`, the real amdsmi, `LD_LIBRARY_PATH`), not a gfx1151 defect.
 
 ## Performance benchmarks
+> ⚠ **Historical numbers (pre-Flash-Next fleet).** The tables below benchmark the earlier Qwen3.6-35B / Qwen3.8-27B residents. Current Flash-Next throughput is ~20 t/s decode (see the DocFlow/session notes); these are kept as the earlier record.
 _Latest content date: 2026-08-14_
 
 ### LLM inference
@@ -380,8 +384,8 @@ _Latest content date: 2026-08-21_
 
 | Service | Port | Backend | Startup | Description |
 |---------|------|---------|---------|-------------|
-| `llama-server` | 8001 | Vulkan | auto | **Primary LLM — Qwen3.6-35B-A3B MTP** (fresh upstream llama.cpp, Vulkan RADV) |
-| `llama-server-qwen38` | 8022 | Vulkan | auto | **Second resident — Qwen3.8-27B VL + MTP** (vision + writing; replaced Muse-Glimmer 2026-08-14) |
+| `llama-server` | 8001 | Vulkan | auto | **Primary LLM — Qwen3.8-Flash-Next (RAM-mode, --parallel 1, MTP, vision)** (fresh upstream llama.cpp, Vulkan RADV) |
+| `llama-server-qwen38` | 8022 | Vulkan | auto | **Second resident — Qwen3.8-Flash-Next (reasoning on) + vision** (vision + writing; replaced Muse-Glimmer 2026-08-14) |
 | `llama-server-qwen27b` | 8001 | Vulkan | via switch | Alternate — Qwen3.6-27B dense. Bind-conflicts with `llama-server`; flip with `strix-llm-switch.sh qwen27` |
 | `llama-server-gemma` | 8001 | Vulkan | via switch | Alternate — Gemma 4 26B-A4B. Bind-conflicts with `llama-server`; flip with `strix-llm-switch.sh gemma` |
 | `comfyui` | 7860 | ROCm | auto | Image/video gen (kyuz0 toolbox container) |
@@ -673,8 +677,8 @@ Build deps: `glslc`, `cmake`, `ninja`, Vulkan headers (mesa 1.4.x). The resultin
 ```
 ├── setup.sh                              # Main setup script
 ├── systemd/
-│   ├── llama-server.service              # PRIMARY LLM — Qwen3.6-35B-A3B MTP (Vulkan, auto)
-│   ├── llama-server-qwen38.service       # SECOND RESIDENT — Qwen3.8-27B VL + MTP on :8022 (auto)
+│   ├── llama-server.service              # PRIMARY LLM — Qwen3.8-Flash-Next (RAM-mode, parallel 1, MTP, vision)
+│   ├── llama-server-qwen38.service       # SECOND RESIDENT — Qwen3.8-Flash-Next (reasoning on) + vision on :8022
 │   ├── llama-server-qwen27b.service      # Alternate LLM — Qwen3.6-27B dense (via switch)
 │   ├── llama-server-gemma.service        # Alternate LLM — Gemma 4 26B-A4B (via switch)
 │   ├── llama-surya2.service              # Surya 2 OCR VLM (document OCR, ROCm, on-demand)
