@@ -2,6 +2,8 @@
 
 Local LLM/VLM + image/video generation (+ NPU inference, currently disabled by `amd_iommu=off`, see [Kernel boot parameters](#kernel-boot-parameters)) for AMD Strix Halo APU (Ryzen AI MAX+ 395, Radeon 8060S iGPU, XDNA2 NPU) with 128GB unified LPDDR5X (124GiB visible to Linux; the iGPU addresses up to 108GiB of it via GTT — capped on purpose, see boot parameters).
 
+> **Current fleet (updated 2026-09):** both resident LLMs are now **Qwen3.8-Flash-Next** (a ~170B-parameter MoE, ~3B active) served via a custom llama.cpp fork. **:8001** runs it in RAM-mode (`-lm none`), `--parallel 1` with **MTP** speculative decoding, vision, reasoning **off** (opt-in per request), ctx 131072. **:8022** runs the same model with reasoning **on** + vision (send `enable_thinking:false` for plain content). The 35B / 27B sections below document the earlier fleet and are kept as history. ⚠ Never combine `--parallel > 1` with MTP draft — it segfaults.
+
 ## Contents
 
 - [Architecture](#architecture)
@@ -31,11 +33,11 @@ Local LLM/VLM + image/video generation (+ NPU inference, currently disabled by `
 ┌──────────────────────────────────────────────────────────────────┐
 │  GPU (Vulkan RADV + ROCm toolboxes — GTT capped at 108GiB)      │
 │  ├─ llama-server (Vulkan, llama.cpp)     port 8001               │
-│  │  └─ Qwen3.6-35B-A3B MTP (UD-Q4_K_XL, primary; 256k-capable,  │
-│  │     run at 128k ctx). Switchable: Qwen3.6-27B / Gemma / DS4  │
+│  │  └─ Qwen3.8-Flash-Next (~170B MoE, 3B active; IQ4_XS,         │
+│  │     131k ctx). RAM-mode, --parallel 1 + MTP, vision, no-think │
 │  ├─ llama-server-qwen38 (Vulkan)        port 8022               │
-│  │  └─ Qwen3.8-27B VL + native MTP (UD-Q4_K_XL + mmproj-F16)    │
-│  │     second resident: vision + writing. Replaced Muse-Glimmer │
+│  │  └─ Qwen3.8-Flash-Next, reasoning ON + vision (same           │
+│  │     model family as :8001; enable_thinking:false = content    │
 │  ├─ ComfyUI (ROCm toolbox)             port 7860               │
 │  │  └─ Image/video gen (Wan 2.2, HunyuanVideo, Qwen Image)     │
 │  ├─ llama-surya2 (ROCm toolbox)        port 8093 (on-demand)   │
