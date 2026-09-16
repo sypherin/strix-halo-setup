@@ -3,6 +3,8 @@
 Local LLM/VLM + image/video generation (+ NPU inference, currently disabled by `amd_iommu=off`, see [Kernel boot parameters](#kernel-boot-parameters)) for AMD Strix Halo APU (Ryzen AI MAX+ 395, Radeon 8060S iGPU, XDNA2 NPU) with 128GB unified LPDDR5X (124GiB visible to Linux; the iGPU addresses up to 108GiB of it via GTT — capped on purpose, see boot parameters).
 
 > **Current fleet (updated 2026-09):** both resident LLMs are now **Qwen3.8-Flash-Next** (a ~170B-parameter MoE, ~3B active) served via a custom llama.cpp fork. **:8001** runs it in RAM-mode (`-lm none`), `--parallel 1` with **MTP** speculative decoding, vision, reasoning **off** (opt-in per request), ctx 131072. **:8022** runs the same model with reasoning **on** + vision (send `enable_thinking:false` for plain content). The 35B / 27B sections below document the earlier fleet and are kept as history. ⚠ Never combine `--parallel > 1` with MTP draft — it segfaults.
+>
+> ⚠ **Setup guide is mid-migration.** Quick start, `setup.sh` and "Building llama.cpp (Vulkan)" below still document the earlier **Vulkan / 35B** stack. The live `:8001` / `:8022` now run through the **EngramHalo ROCm** toolbox container (services `fn-engramhalo` and `fn-proxy-8022`), not the Vulkan `llama-server`. A full setup-guide rewrite for the Flash-Next stack is pending — don't follow the deep setup steps as current yet.
 
 ## Contents
 
@@ -32,10 +34,10 @@ Local LLM/VLM + image/video generation (+ NPU inference, currently disabled by `
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  GPU (Vulkan RADV + ROCm toolboxes — GTT capped at 108GiB)      │
-│  ├─ llama-server (Vulkan, llama.cpp)     port 8001               │
+│  ├─ fn-engramhalo (EngramHalo ROCm, toolbox)  port 8001          │
 │  │  └─ Qwen3.8-Flash-Next (~170B MoE, 3B active; IQ4_XS,         │
 │  │     131k ctx). RAM-mode, --parallel 1 + MTP, vision, no-think │
-│  ├─ llama-server-qwen38 (Vulkan)        port 8022               │
+│  ├─ fn-proxy-8022 (reason-on proxy → :8001)   port 8022          │
 │  │  └─ Qwen3.8-Flash-Next, reasoning ON + vision (same           │
 │  │     model family as :8001; enable_thinking:false = content    │
 │  ├─ ComfyUI (ROCm toolbox)             port 7860               │
