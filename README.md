@@ -69,13 +69,13 @@ All GPU services run as **systemd user services**; the two resident LLM servers 
 | BIOS | AMI v1.07 |
 
 ## Software stack
-_Latest content date: 2026-08-08_
+_Latest content date: 2026-09-16_
 
 | Component | Version | Notes |
 |-----------|---------|-------|
 | Kernel | 7.2.0-rc3 (vanilla) | COPR `@kernel-vanilla/mainline-wo-mergew` |
 | Mesa | 25.3.6 (Vulkan 1.4.341) | Vulkan RADV driver |
-| llama.cpp | fresh upstream `~/llama.cpp` @ `69bf643` (2026-08-08, Vulkan build) | Native MTP speculative decoding (`--spec-type draft-mtp`). The old `~/llama-cpp-turboquant` fork is retired for the LLM path. |
+| llama.cpp (LLM) | **EngramHalo fork** (ROCm/HIP, `qwen4exp` arch) run in the `engramhalo` toolbox container from the kyuz0 `rocm-10.0-engramhalo` image | Serves Qwen3.8-Flash-Next with native MTP (`--spec-type draft-mtp,ngram-mod`). The old Vulkan `~/llama.cpp @69bf643` path is legacy, kept only for the DeepSeek / Gemma writeups below. |
 | ROCm | 7.2 (kyuz0 toolbox) | For Surya OCR + ComfyUI containers |
 
 > **Vulkan users:** pin the *date-stamped* kyuz0 tag. A later build on the floating
@@ -94,6 +94,8 @@ chmod +x setup.sh bin/*.sh patches/*.sh
 ./setup.sh
 systemctl --user start llama-server comfyui
 ```
+
+> ⚠ **This Quick start provisions the earlier Vulkan / 35B stack.** The live box now runs Flash-Next via `fn-engramhalo` (EngramHalo ROCm container — see [Architecture](#architecture)); `setup.sh` and the automated Flash-Next setup are being rewritten. Don't expect these steps to stand up the current stack yet.
 
 For NPU setup, see [NPU Setup](#npu-setup) below.
 
@@ -309,6 +311,14 @@ _Latest content date: 2026-08-14_
 **Both drivers run Q4 with native MTP** (`--spec-type draft-mtp`) on a fresh upstream llama.cpp
 Vulkan build. Numbers are the server's own `timings` on real chat-completion requests (250-word
 generation, warm), i.e. actual end-user throughput including the jinja chat template.
+
+**Current :8001 driver — `fn-engramhalo` (EngramHalo ROCm container):**
+
+| Model | Serve config | Sustained tg | Draft accept | Notes |
+|-------|--------------|:-:|:-:|-------|
+| **Qwen3.8-Flash-Next** (`qwen4exp`, ~177B total / ~6B active, 512 experts / 10 used) | IQ4_XS + MTP Q8_0 draft, q8_0 KV, RAM-mode (`-lm none`), `--parallel 1`, ctx 131072 | _clean benchmark pending (stage-3 refresh)_ | ~54% | reasoning off; `fn-proxy-8022` (:8022) mirrors it reasoning-on. 🔴 never `--parallel > 1` with the MTP sidecar (segfault) |
+
+**Earlier fleet (pre-Flash-Next, Aug 2026 — historical record; these ran on the Vulkan `llama-server` path):**
 
 | Model | Quant + MTP | Sustained tg | Peak | Draft accept | Role |
 |-------|-------------|:-:|:-:|:-:|------|
