@@ -4,6 +4,11 @@
 
 | Component | Version | Date | Notes |
 |-----------|---------|------|-------|
+| Model fleets | everyday (27B + llm-jp + ComfyUI) / text (Flash-Next) | 2026-10-01 | Models swapped as a saved set with health checks and smoke tests, replacing per-model flips (`strix-llm-switch.sh` retired) |
+| halogen-flash-server | 0.17.1 | 2026-10-08 | Text-fleet engine for Qwen3.8-Flash-Next; first cut over from EngramHalo 2026-09-18 (0.11.6) |
+| Mesa (Vulkan RADV) | 26.2.3 (Fedora 44) | 2026-09-29 | Routine update |
+| Qwen3.8-27B on :8001 | julianmb ROCmFP4-FAST + mmproj-F16, ROCmFPX `75e67a92b` (q38rocm v1.7.0), MTP n=4 | 2026-09-28 | Everyday driver. Decode median 36.8 vs 25.7 tok/s on upstream Vulkan UD-Q4_K_XL (+43%), same box same evening. See README benchmarks |
+| Kernel | 7.3.0-rc2 vanilla | 2026-09-09 | Running kernel |
 | Mesa (Vulkan RADV) | 26.1.8 (Fedora 44) | 2026-09-07 | F43→44 upgrade. ⚠ MTP **decode** regression on gfx1151 (batched mat-vec split) — fix: `GGML_VK_MMV_NO_SPLIT=1` restores decode 15→23 t/s, prefill unaffected. See `docs/benchmarks-history.md` |
 | llama.cpp | upstream master (Vulkan) | 2026-09-06 | Adopted plain upstream over the 69bf643 build for +15-27% prefill (upstream Vulkan `mul_mat_id` pad-K); fork/cherry-pick rejected (re-add decode loss) |
 | Qwen3.8-27B VL on :8022 | unsloth UD-Q4_K_XL + mmproj-F16 | 2026-08-14 | Native VL + native MTP in one model; replaced Muse-Glimmer as the second resident |

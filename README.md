@@ -2,9 +2,15 @@
 
 Local LLM/VLM + image/video generation (+ NPU inference, currently disabled by `amd_iommu=off`, see [Kernel boot parameters](#kernel-boot-parameters)) for AMD Strix Halo APU (Ryzen AI MAX+ 395, Radeon 8060S iGPU, XDNA2 NPU) with 128GB unified LPDDR5X (124GiB visible to Linux; the iGPU addresses up to 108GiB of it via GTT — capped on purpose, see boot parameters).
 
-> **Current fleet (updated 2026-09):** both resident LLMs are now **Qwen3.8-Flash-Next** (a ~177B-parameter MoE — ~125B experts + ~51B engram table — with ~6B active per token, 512 experts / 10 used, `qwen4exp` arch) served via a custom llama.cpp fork. **:8001** runs it in RAM-mode (`-lm none`), `--parallel 1` with **MTP** speculative decoding, vision, reasoning **off** (opt-in per request), ctx 131072. **:8022** runs the same model with reasoning **on** + vision (send `enable_thinking:false` for plain content). The 35B / 27B sections below document the earlier fleet and are kept as history. ⚠ Never combine `--parallel > 1` with MTP draft — it segfaults.
+> **Current setup (updated 2026-10-11):** the box runs one of two saved model **fleets**, swapped as a set (stop, load, health-check, smoke-test).
 >
-> ⚠ **Setup guide is mid-migration.** Quick start, `setup.sh` and "Building llama.cpp (Vulkan)" below still document the earlier **Vulkan / 35B** stack. The live `:8001` / `:8022` now run through the **EngramHalo ROCm** toolbox container (services `fn-engramhalo` and `fn-proxy-8022`), not the Vulkan `llama-server`. A full setup-guide rewrite for the Flash-Next stack is pending — don't follow the deep setup steps as current yet.
+> - **Everyday fleet:** **Qwen3.8-27B** (dense, vision) in **ROCmFP4-FAST** on the **ROCmFPX** llama.cpp fork (HIP), native MTP with 4 draft tokens, ctx 131072, reasoning off. **36.8 tok/s decode** single stream (median of 4 prompt types, temp 0) and 284.5 tok/s prefill at an 11.6k prompt. That is 43% faster than the same model on upstream llama.cpp Vulkan on this box. Beside it: llm-jp-4.1-32b-a3b for Japanese, and ComfyUI with Qwen-Image 2.1 (stills) and MiniMax H3 (video). Numbers and launch line: [Qwen3.8-27B FP4 + MTP on ROCmFPX](#qwen38-27b-fp4--mtp-on-rocmfpx-current-everyday-driver).
+> - **Text fleet** (long multi-turn builds): **Qwen3.8-Flash-Next** (~177B MoE, ~6B active per token, 512 experts / 10 used, `qwen4exp` arch) on **halogen-flash-server 0.17.1**, a closed-source gfx1151-only engine from Peonist AI, IQ4_XS GGUF, MTP, vision, ctx 131072.
+> - In both fleets, **:8001** answers with reasoning off and **:8022** serves the same model with reasoning on (send `enable_thinking:false` for plain content).
+>
+> The 35B, Gemma and EngramHalo sections below document earlier fleets and are kept as history.
+>
+> **Setup guide is mid-migration.** Quick start, `setup.sh` and "Building llama.cpp (Vulkan)" below still document the earlier **Vulkan / 35B** stack. Don't follow the deep setup steps as current yet; the launch line for the current 27B is in the benchmark section.
 
 ## Contents
 
@@ -33,27 +39,27 @@ Local LLM/VLM + image/video generation (+ NPU inference, currently disabled by `
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  GPU (Vulkan RADV + ROCm toolboxes — GTT capped at 108GiB)      │
-│  ├─ fn-engramhalo (EngramHalo ROCm, toolbox)  port 8001          │
-│  │  └─ Qwen3.8-Flash-Next (~177B MoE, 6B active; IQ4_XS,         │
-│  │     131k ctx). RAM-mode, --parallel 1 + MTP, vision, no-think │
-│  ├─ fn-proxy-8022 (reason-on proxy → :8001)   port 8022          │
-│  │  └─ Qwen3.8-Flash-Next, reasoning ON + vision (same           │
-│  │     model family as :8001; enable_thinking:false = content    │
-│  ├─ ComfyUI (ROCm toolbox)             port 7860               │
-│  │  └─ Image/video gen (Wan 2.2, HunyuanVideo, Qwen Image)     │
-│  ├─ llama-surya2 (ROCm toolbox)        port 8093 (on-demand)   │
-│  │  └─ Surya 2 OCR VLM 650M (document OCR)                      │
-│  └─ surya-server (podman, dedicated)   port 8090 (legacy)      │
-│     └─ Surya v1 layout+OCR                                      │
+│  GPU (gfx1151, GTT capped at 108GiB). One fleet loaded at a time │
 │                                                                  │
-│  NPU (XDNA2 — 51 TOPS, 47μs latency)                           │
-│  └─ FastFlowLM (flm-asr.service)        port 52625 (on-demand)  │
-│     └─ Whisper STT for Jarvis (off CPU) + small LLMs           │
+│  Everyday fleet                                                  │
+│  ├─ :8001  Qwen3.8-27B ROCmFP4-FAST + MTP n4 (ROCmFPX, HIP)      │
+│  │         vision, reasoning off, 131k ctx, 36.8 tok/s           │
+│  ├─ llm-jp-4.1-32b-a3b (Japanese), steps aside for image jobs    │
+│  └─ ComfyUI (ROCm toolbox)                                       │
+│            Qwen-Image 2.1 (stills), MiniMax H3 (video)           │
+│                                                                  │
+│  Text fleet (long multi-turn builds)                             │
+│  └─ :8001  Qwen3.8-Flash-Next, halogen-flash-server (container)  │
+│            ~177B MoE / ~6B active, IQ4_XS, MTP, vision, 131k ctx │
+│                                                                  │
+│  Both fleets: :8022 = the :8001 model with reasoning on (proxy)  │
+│  On demand: Surya OCR (document layout + OCR)                    │
+│                                                                  │
+│  NPU (XDNA2, 51 TOPS): unavailable while amd_iommu=off           │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-All GPU services run as **systemd user services**; the two resident LLM servers (:8001, :8022) and ComfyUI auto-start on boot, the rest start on demand.
+All model servers run as **systemd user services**. A fleet is a saved list of units; one script swaps the whole set, health-checks it and smoke-tests :8001 and :8022, falling back on failure. A dense 27B and a 177B MoE don't fit side by side with image generation in 128GB, which is why they are separate fleets rather than one always-on stack.
 
 ## Hardware
 
@@ -69,13 +75,15 @@ All GPU services run as **systemd user services**; the two resident LLM servers 
 | BIOS | AMI v1.07 |
 
 ## Software stack
-_Latest content date: 2026-09-16_
+_Latest content date: 2026-10-11_
 
 | Component | Version | Notes |
 |-----------|---------|-------|
-| Kernel | 7.2.0-rc3 (vanilla) | COPR `@kernel-vanilla/mainline-wo-mergew` |
-| Mesa | 25.3.6 (Vulkan 1.4.341) | Vulkan RADV driver |
-| llama.cpp (LLM) | **EngramHalo fork** (ROCm/HIP, `qwen4exp` arch) run in the `engramhalo` toolbox container from the kyuz0 `rocm-10.0-engramhalo` image | Serves Qwen3.8-Flash-Next with native MTP (`--spec-type draft-mtp,ngram-mod`). The old Vulkan `~/llama.cpp @69bf643` path is legacy, kept only for the DeepSeek / Gemma writeups below. |
+| Kernel | 7.3.0-rc2 (vanilla) | COPR `@kernel-vanilla/mainline-wo-mergew` |
+| Mesa | 26.2.3 | Vulkan RADV driver |
+| LLM engine, everyday fleet | **ROCmFPX** llama.cpp fork, commit `75e67a92b`, packaged as [julianmb/q38rocm](https://github.com/julianmb/q38rocm) v1.7.0 | HIP on `ROCm0`. Serves Qwen3.8-27B ROCmFP4-FAST with native MTP (`--spec-type draft-mtp`). Runtime libs from TheRock ROCm wheels (`rocm-sdk-core` 7.15 nightly) on `LD_LIBRARY_PATH`. |
+| LLM engine, text fleet | **halogen-flash-server** 0.17.1 ([peonist-ai](https://github.com/peonist-ai/halogen-flash-server)) | Closed-source, gfx1151 only, ships as a container. Serves Qwen3.8-Flash-Next. Replaced the EngramHalo fork (kyuz0 `rocm-10.0-engramhalo` toolbox) in Sep 2026. |
+| llama.cpp (Vulkan) | upstream | Legacy LLM path, kept for the DeepSeek / Gemma writeups and A/B runs below. |
 | ROCm | 7.2 (kyuz0 toolbox) | For Surya OCR + ComfyUI containers |
 
 > **Vulkan users:** pin the *date-stamped* kyuz0 tag. A later build on the floating
@@ -303,8 +311,53 @@ MEM_FRAC=0.5 PORT=8107 bin/vllm-serve-strix.sh /path/to/hf-model
   (`CC`, the real amdsmi, `LD_LIBRARY_PATH`), not a gfx1151 defect.
 
 ## Performance benchmarks
-> ⚠ **Historical numbers (pre-Flash-Next fleet).** The tables below benchmark the earlier Qwen3.6-35B / Qwen3.8-27B residents. Current Flash-Next throughput is ~20 t/s decode (see the DocFlow/session notes); these are kept as the earlier record.
-_Latest content date: 2026-08-14_
+
+### Qwen3.8-27B FP4 + MTP on ROCmFPX (current everyday driver)
+_Measured 2026-09-28 on this box. Single stream (`-np 1`), 600-token outputs, the server's own `timings`._
+
+Engine: ROCmFPX llama.cpp fork (commit `75e67a92b`) as packaged in [julianmb/q38rocm](https://github.com/julianmb/q38rocm) v1.7.0, HIP on `ROCm0`.
+Weights: [`julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF`](https://huggingface.co/julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF) plus `mmproj-F16` for vision.
+
+Decode, tok/s, by prompt type:
+
+| Prompt type | temp 0 | temp 0.7 | MTP drafts accepted (temp 0) |
+|-------------|:-:|:-:|:-:|
+| prose | 24.2 | 21.1 | 365 / 936 |
+| code | 39.9 | 39.1 | 459 / 558 |
+| json | 44.7 | 44.0 | 478 / 484 |
+| reasoning | 33.8 | 27.6 | 436 / 651 |
+| **median** | **36.8** | **33.3** | |
+
+Prefill: **284.5 tok/s** at an 11,626-token prompt (41 s to first token), 223.5 tok/s at 35,531 tokens (159 s).
+
+Same box, same evening, one engine loaded at a time:
+
+| Engine | Quant | MTP draft | Decode median, temp 0 | temp 0.7 | Prefill 11.6k | Prefill 35.5k |
+|--------|-------|:-:|:-:|:-:|:-:|:-:|
+| **ROCmFPX (q38rocm v1.7.0), HIP** | **ROCmFP4-FAST** | n=4 | **36.8** | **33.3** | 284.5 | 223.5 |
+| upstream llama.cpp `4b9b919`, Vulkan | UD-Q4_K_XL | n=2 | 25.7 | 24.6 | 286.0 | 242.5 |
+
+What this says:
+
+- **+43% decode** (36.8 vs 25.7) for the same model on the same box. Prefill is level at 11.6k and upstream Vulkan is ~8% ahead at 35.5k.
+- **The FP4 quant is what makes the fork fast.** On a short-answer check (32 items: tool calls, QA, math, format), ROCmFPX with FP4 averaged 27.9 tok/s, upstream Vulkan with UD-Q4_K_XL 22.9, and ROCmFPX with the *same* UD-Q4_K_XL only 18.9. All three scored the same on that check: tool calls 11/11, QA 10/10, math 7/9, format 2/2.
+- **Prose gains least.** MTP drafts land far less often on free prose (39% accepted) than on JSON (99%), so expect ~24 tok/s for long prose and 40+ for code and structured output.
+
+Launch (as run, minus our local wrappers):
+
+```bash
+LD_LIBRARY_PATH=$ROCM_SDK/_rocm_sdk_core/lib:$ROCM_SDK/_rocm_sdk_libraries/lib \
+llama-server -m Qwen3.8-27B-ROCmFP4-FAST.gguf --mmproj mmproj-F16.gguf \
+  -dev ROCm0 -ngl 99 -fa on -np 1 -c 131072 -b 2048 -ub 2048 -t 16 --poll 100 \
+  -ctk q8_0 -ctv q8_0 --no-mmap --kv-unified --jinja --reasoning off -n 8192 \
+  --spec-type draft-mtp --spec-draft-n-max 4 --spec-draft-p-min 0.0 \
+  --host 127.0.0.1 --port 8001
+```
+
+`$ROCM_SDK` is the `site-packages` dir of a Python venv with TheRock ROCm wheels installed. `--no-mmap` is required on ROCm (see [Critical configuration notes](#critical-configuration-notes)). Tracked on TokenMark as a "Verified (ran it)" row: <https://tokenmark.app/hardware/strix-halo>
+
+> **Historical numbers from here down (pre-Oct 2026 fleets).** The tables below benchmark the earlier Qwen3.6-35B, Qwen3.8-27B (Vulkan) and Flash-Next (EngramHalo) residents and are kept as the record.
+_Latest content date of the historical tables: 2026-08-14_
 
 ### LLM inference
 
@@ -387,12 +440,15 @@ The single-stream numbers in this repo are tracked on [TokenMark](https://tokenm
 
 - Strix Halo configs: <https://tokenmark.app/hardware/strix-halo>
 - Ask it what to run on a given box: <https://tokenmark.app/api/recommend?hardware=Strix+Halo&tasks=coding>
+- Our current everyday config (Qwen3.8-27B ROCmFP4-FAST + MTP, 36.8 tok/s) is listed there as a "Verified (ran it)" row, next to the earlier Vulkan rows from this repo.
 - This repo is one of the tracked sources. Submit your own README numbers at <https://tokenmark.app/submit>
 
 TokenMark is built by [Altronis](https://altronis.sg), private on-prem AI in Singapore.
 
 ## Services
 _Latest content date: 2026-08-21_
+
+> **Historical (Aug 2026 Vulkan setup).** The box now swaps whole fleets (see [Architecture](#architecture)); the units and the `strix-llm-switch.sh` flips below are the earlier setup and the switch script is retired.
 
 | Service | Port | Backend | Startup | Description |
 |---------|------|---------|---------|-------------|
@@ -614,6 +670,8 @@ sudo dnf upgrade --refresh --exclude="kernel*,*rocm*,*hip*,roc*,rccl*,mivisionx*
 
 ## Why Vulkan for LLM? Why ROCm for image gen?
 
+> **Update 2026-10:** this is no longer a blanket rule. For the dense Qwen3.8-27B, the ROCmFPX fork on HIP with an FP4 quant beats upstream Vulkan by 43% on decode (36.8 vs 25.7 tok/s, [details](#qwen38-27b-fp4--mtp-on-rocmfpx-current-everyday-driver)), and both current fleets serve LLMs on ROCm/HIP engines. The same fork with a regular UD-Q4_K_XL quant was *slower* than Vulkan, so the win comes from the FP4 kernels, not from ROCm itself. The text below is the earlier reasoning.
+
 **LLM inference**: ROCm doesn't reliably detect gfx1151 for all workloads. Vulkan via RADV works perfectly and uses the full unified pool (~124GiB GTT).
 
 **Image/video generation**: ComfyUI and PyTorch-based pipelines require ROCm. The kyuz0 toolbox containers include patched ROCm (TheRock nightlies) that work on gfx1151 with `HSA_OVERRIDE_GFX_VERSION=11.5.1`.
@@ -625,9 +683,19 @@ sudo dnf upgrade --refresh --exclude="kernel*,*rocm*,*hip*,roc*,rccl*,mivisionx*
 | Stability | Excellent | Good (needs toolbox) |
 
 ## Models
-_Latest content date: 2026-08-15_
+_Latest content date: 2026-10-11_
 
-### LLM (llama-server on port 8001)
+### Current fleets (2026-10)
+
+| Fleet | Model | Type | Active params | Quant | Engine | Decode | Use |
+|-------|-------|------|---------------|-------|--------|--------|-----|
+| Everyday | **Qwen3.8-27B** + mmproj-F16 | Dense, vision | 27B | ROCmFP4-FAST | ROCmFPX (HIP), MTP n=4 | **36.8 tok/s** median (24 prose, 45 JSON) | Default driver: chat, coding, vision, writing |
+| Everyday | llm-jp-4.1-32b-a3b-thinking | MoE | 3B | Q4_K_M | upstream llama.cpp, Vulkan | not benchmarked here | Japanese |
+| Text | **Qwen3.8-Flash-Next** | MoE, vision | ~6B of ~177B | IQ4_XS GGUF | halogen-flash-server 0.17.1, MTP | clean bench pending on this engine | Long multi-turn builds |
+
+Image and video (everyday fleet, ComfyUI): **Qwen-Image 2.1** for stills, **MiniMax H3** for video. A still needs ~41GiB and an H3 clip ~54GiB, so the Japanese model steps aside while a job runs.
+
+### LLM, earlier fleets (history: llama-server on port 8001)
 
 | Model | Type | Active Params | Quant | Speed | Use case |
 |-------|------|---------------|-------|-------|----------|
