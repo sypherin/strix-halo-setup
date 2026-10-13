@@ -155,8 +155,8 @@ one-line bug); at **budget 4096 + an agentic loop it self-fixed to zero errors i
 coding/debug (range 4k–8k); small-active models (this is 3B-active) benefit most from more budget.
 
 **Does raising it slow everything? No.** The budget is a *cap, not a floor* — a request only reasons
-as long as it needs. Requests with thinking **off** are unaffected — and **neo/deneb sends
-`enable_thinking:false`** (see `~/neo-assistant/src/llm.py`), so it does zero thinking and the bigger
+as long as it needs. Requests with thinking **off** are unaffected — and **a client that sends
+`enable_thinking:false`**, so it does zero thinking and the bigger
 budget can't touch it. Only requests that opt into thinking (ccr `/think`, extraction pipelines)
 reason deeper and thus take more wall-clock; per-token speed (~85 t/s) is unchanged.
 
