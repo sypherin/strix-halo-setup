@@ -776,14 +776,14 @@ sudo dnf upgrade --refresh --exclude="kernel*,*rocm*,*hip*,roc*,rccl*,mivisionx*
 | Stability | Excellent | Good (needs toolbox) |
 
 ## Models
-_Latest content date: 2026-10-11_
+_Latest content date: 2026-10-14_
 
 ### Current fleets (2026-10)
 
 | Fleet | Model | Type | Active params | Quant | Engine | Decode | Use |
 |-------|-------|------|---------------|-------|--------|--------|-----|
 | Everyday | **Qwen3.8-27B** + mmproj-F16 | Dense, vision | 27B | ROCmFP4-FAST | ROCmFPX (HIP), MTP n=4 | **36.8 tok/s** median (24 prose, 45 JSON) | Default driver: chat, coding, vision, writing |
-| Everyday | llm-jp-4.1-32b-a3b-thinking | MoE | 3B | Q4_K_M | upstream llama.cpp, Vulkan | not benchmarked here | Japanese |
+| Everyday | llm-jp-4.1-32b-a3b-thinking | MoE | 3B | Q4_K_M | llama.cpp llm-jp-4.1 branch + byte-fallback tokenizer patch, Vulkan | **81.0 tok/s** (llama-bench tg256), prefill 1,980 tok/s (pp1024); at 4096 depth 72.6 / 944. ROCmFPX: 73.6 / 1,417, at 4096 depth 64.8 / 1,021 | Japanese |
 | Text | **Qwen3.8-Flash-Next** | MoE, vision | ~6B of ~177B | IQ4_XS GGUF | halogen-flash-server 0.17.1, MTP | **46.4 tok/s** median (36 prose, 57 JSON); prefill ~1,450 tok/s | Long multi-turn builds |
 
 Image and video (everyday fleet, ComfyUI): **Qwen-Image 2.1** for stills, **MiniMax H3** for video. A still needs ~41GiB and an H3 clip ~54GiB, so the Japanese model steps aside while a job runs.
